@@ -1,0 +1,2576 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Memex-Wiki Control Panel</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800;900&display=swap" rel="stylesheet">
+    <!-- Иконка (Фавикон): светлый квадрат с буквой W -->
+    <link rel="icon" href="data:image/svg+xml,<svg xmlns=%22http://www.w3.org/2000/svg%22 viewBox=%220 0 100 100%22><rect width=%22100%22 height=%22100%22 rx=%2220%22 fill=%22%23fafafa%22/><text x=%2250%25%22 y=%2270%25%22 font-family=%22Inter, sans-serif%22 font-weight=%22800%22 font-size=%2265%22 fill=%22%2309090b%22 text-anchor=%22middle%22>W</text></svg>">
+    
+    <!-- Подключаем Three.js и 3D Graph Library через UMD-скрипты (устраняет CORS и конфликты модулей) -->
+    <script src="https://unpkg.com/three@0.160.0/build/three.min.js"></script>
+    <script src="https://unpkg.com/3d-force-graph@1.73.0/dist/3d-force-graph.min.js"></script>
+
+    <!-- Глобальный обработчик ошибок для визуальной диагностики -->
+    <script>
+        window.onerror = function(message, source, lineno, colno, error) {
+            const panel = document.getElementById('debug-error-panel');
+            if (panel) {
+                panel.style.display = 'block';
+                panel.innerText += '\n[' + new Date().toLocaleTimeString() + '] ' + message + ' (строка ' + lineno + ':' + colno + ')';
+            }
+        };
+    </script>
+    <style>
+        :root {
+            --bg: #09090b;
+            --panel-bg: #18181b;
+            --border: #27272a;
+            --text: #fafafa;
+            --text-muted: #a1a1aa;
+            --accent: #6366f1;
+            --accent-muted: rgba(99, 102, 241, 0.1);
+            --success: #10b981;
+            --error: #ef4444;
+            --card-hover: #202023;
+            --overlay-bg: rgba(24, 24, 27, 0.95);
+        }
+
+        body.light-theme {
+            --bg: #f4f4f5;
+            --panel-bg: #ffffff;
+            --border: #e4e4e7;
+            --text: #09090b;
+            --text-muted: #71717a;
+            --accent: #4f46e5;
+            --accent-muted: rgba(79, 70, 229, 0.1);
+            --success: #059669;
+            --error: #dc2626;
+            --card-hover: #f4f4f5;
+            --overlay-bg: rgba(255, 255, 255, 0.95);
+        }
+
+        * {
+            box-sizing: border-box;
+            margin: 0;
+            padding: 0;
+        }
+
+        body {
+            font-family: 'Inter', sans-serif;
+            background-color: var(--bg);
+            color: var(--text);
+            height: 100vh;
+            overflow: hidden;
+            display: flex;
+        }
+
+        /* Sidebar Navigation */
+        .sidebar {
+            width: 280px;
+            background: var(--panel-bg);
+            border-right: 1px solid var(--border);
+            display: flex;
+            flex-direction: column;
+            padding: 32px 24px;
+            z-index: 10;
+        }
+
+        .logo-area {
+            display: flex;
+            align-items: center;
+            gap: 12px;
+            margin-bottom: 40px;
+        }
+
+        .logo-icon {
+            width: 28px;
+            height: 28px;
+            background: #fafafa;
+            border-radius: 6px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            font-weight: 700;
+            color: #09090b;
+            font-size: 14px;
+        }
+
+        .logo-text {
+            font-size: 16px;
+            font-weight: 600;
+            letter-spacing: -0.3px;
+        }
+
+        .nav-list {
+            list-style: none;
+            display: flex;
+            flex-direction: column;
+            gap: 6px;
+        }
+
+        .nav-item {
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            padding: 12px 16px;
+            border-radius: 8px;
+            cursor: pointer;
+            color: var(--text-muted);
+            font-size: 14px;
+            font-weight: 500;
+            transition: all 0.2s ease;
+        }
+
+        .nav-item:hover {
+            color: var(--text);
+            background: var(--card-hover);
+        }
+
+        .nav-item.active {
+            color: var(--text);
+            background: var(--border);
+        }
+
+        .nav-item-inner {
+            display: flex;
+            align-items: center;
+            gap: 12px;
+        }
+
+        /* Main Container */
+        .main-container {
+            flex: 1;
+            display: flex;
+            flex-direction: column;
+            height: 100vh;
+            overflow: hidden;
+            position: relative;
+        }
+
+        /* Pages */
+        .page {
+            display: none;
+            flex: 1;
+            padding: 40px 48px;
+            overflow-y: auto;
+            max-width: 1200px;
+            width: 100%;
+            margin: 0 auto;
+        }
+
+        .page.active {
+            display: flex;
+            flex-direction: column;
+        }
+
+        .page-header {
+            margin-bottom: 32px;
+            display: flex;
+            justify-content: space-between;
+            align-items: flex-start;
+        }
+
+        .page-title-group {
+            display: flex;
+            flex-direction: column;
+            gap: 6px;
+        }
+
+        .page-title {
+            font-size: 22px;
+            font-weight: 600;
+            letter-spacing: -0.4px;
+        }
+
+        .page-subtitle {
+            font-size: 13px;
+            color: var(--text-muted);
+        }
+
+        /* Info Badge / Tooltip */
+        .help-badge {
+            background: var(--panel-bg);
+            border: 1px solid var(--border);
+            padding: 8px 14px;
+            border-radius: 20px;
+            font-size: 12px;
+            color: var(--text-muted);
+            display: flex;
+            align-items: center;
+            gap: 8px;
+            cursor: help;
+            position: relative;
+        }
+
+        .help-badge:hover {
+            color: var(--text);
+            border-color: var(--text-muted);
+        }
+
+        .help-tooltip {
+            display: none;
+            position: absolute;
+            top: 40px;
+            right: 0;
+            width: 280px;
+            background: var(--panel-bg);
+            border: 1px solid var(--border);
+            padding: 16px;
+            border-radius: 12px;
+            box-shadow: 0 10px 30px rgba(0,0,0,0.15);
+            z-index: 100;
+            color: var(--text-muted);
+            line-height: 1.5;
+            font-weight: 400;
+            text-align: left;
+        }
+
+        .help-badge:hover .help-tooltip {
+            display: block;
+        }
+
+        /* 3D Graph Page Layout */
+        #page-graph {
+            padding: 0;
+            max-width: none;
+            position: relative;
+        }
+
+        .graph-container {
+            width: 100%;
+            height: 100%;
+            position: absolute;
+            top: 0;
+            left: 0;
+        }
+
+        .graph-overlay-panel {
+            position: absolute;
+            top: 32px;
+            left: 32px;
+            background: var(--overlay-bg);
+            border: 1px solid var(--border);
+            backdrop-filter: blur(20px);
+            padding: 24px;
+            border-radius: 12px;
+            z-index: 5;
+            width: 280px;
+            box-shadow: 0 4px 30px rgba(0, 0, 0, 0.15);
+        }
+
+        .graph-overlay-panel h3 {
+            font-size: 15px;
+            font-weight: 600;
+            margin-bottom: 12px;
+            letter-spacing: -0.2px;
+        }
+
+        .graph-legend {
+            display: flex;
+            flex-direction: column;
+            gap: 8px;
+            font-size: 12px;
+            margin-top: 16px;
+        }
+
+        .legend-item {
+            display: flex;
+            align-items: center;
+            gap: 10px;
+            color: var(--text-muted);
+        }
+
+        .legend-color {
+            width: 10px;
+            height: 10px;
+            border-radius: 50%;
+        }
+
+        /* Sidebar for details */
+        .details-sidebar {
+            position: absolute;
+            right: 0;
+            top: 0;
+            width: 420px;
+            height: 100%;
+            background: var(--overlay-bg);
+            border-left: 1px solid var(--border);
+            backdrop-filter: blur(20px);
+            z-index: 5;
+            transform: translateX(100%);
+            transition: transform 0.3s cubic-bezier(0.16, 1, 0.3, 1);
+            padding: 32px;
+            display: flex;
+            flex-direction: column;
+            overflow-y: auto;
+            box-shadow: -10px 0 40px rgba(0,0,0,0.15);
+        }
+
+        .details-sidebar.open {
+            transform: translateX(0);
+        }
+
+        .close-btn {
+            align-self: flex-end;
+            background: none;
+            border: none;
+            color: var(--text-muted);
+            font-size: 16px;
+            cursor: pointer;
+            margin-bottom: 24px;
+            transition: color 0.2s ease;
+        }
+
+        .close-btn:hover {
+            color: var(--text);
+        }
+
+        /* Cards & Form fields */
+        .glass-panel {
+            background: var(--panel-bg);
+            border: 1px solid var(--border);
+            border-radius: 12px;
+            padding: 32px;
+            margin-bottom: 24px;
+        }
+
+        .search-box {
+            display: flex;
+            gap: 12px;
+            width: 100%;
+        }
+
+        input[type="text"], input[type="password"], select {
+            flex: 1;
+            background: var(--bg);
+            border: 1px solid var(--border);
+            padding: 12px 16px;
+            border-radius: 8px;
+            color: var(--text);
+            font-size: 14px;
+            font-family: inherit;
+            transition: border-color 0.2s ease;
+        }
+
+        input[type="text"]:focus, input[type="password"]:focus, select:focus {
+            outline: none;
+            border-color: var(--text-muted);
+        }
+
+        .btn {
+            background: var(--text);
+            color: var(--bg);
+            border: none;
+            padding: 12px 24px;
+            border-radius: 8px;
+            font-weight: 600;
+            font-size: 13px;
+            cursor: pointer;
+            transition: opacity 0.2s ease;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            gap: 8px;
+        }
+
+        .btn:hover {
+            opacity: 0.9;
+        }
+
+        .btn:disabled {
+            background: var(--border);
+            color: var(--text-muted);
+            cursor: not-allowed;
+            opacity: 0.6;
+        }
+
+        .btn-secondary {
+            background: transparent;
+            color: var(--text);
+            border: 1px solid var(--border);
+        }
+
+        .btn-secondary:hover {
+            background: var(--card-hover);
+        }
+
+        .form-group {
+            margin-bottom: 24px;
+            display: flex;
+            flex-direction: column;
+            gap: 8px;
+        }
+
+        .form-group label {
+            font-size: 12px;
+            font-weight: 600;
+            color: var(--text-muted);
+            text-transform: uppercase;
+            letter-spacing: 0.5px;
+        }
+
+        .toggle-group {
+            display: flex;
+            background: var(--bg);
+            border: 1px solid var(--border);
+            padding: 4px;
+            border-radius: 8px;
+            width: fit-content;
+        }
+
+        .toggle-group-btn {
+            background: none;
+            border: none;
+            color: var(--text-muted);
+            padding: 8px 16px;
+            border-radius: 6px;
+            font-size: 13px;
+            font-weight: 500;
+            cursor: pointer;
+            transition: all 0.2s ease;
+        }
+
+        .toggle-group-btn.active {
+            color: var(--bg);
+            background: var(--text);
+        }
+
+        /* Results */
+        .result-panel {
+            flex: 1;
+            display: flex;
+            flex-direction: column;
+            min-height: 300px;
+        }
+
+        .result-title {
+            font-size: 14px;
+            font-weight: 600;
+            color: var(--text-muted);
+            margin-bottom: 16px;
+            text-transform: uppercase;
+            letter-spacing: 0.5px;
+        }
+
+        .result-content {
+            background: var(--bg);
+            border: 1px solid var(--border);
+            padding: 24px;
+            border-radius: 8px;
+            font-size: 14px;
+            line-height: 1.6;
+            overflow-y: auto;
+            white-space: pre-wrap;
+            flex: 1;
+        }
+
+        /* Loader */
+        .loader {
+            display: none;
+            align-items: center;
+            justify-content: center;
+            gap: 12px;
+            padding: 40px;
+            color: var(--text-muted);
+            font-size: 13px;
+        }
+
+        .spinner {
+            width: 20px;
+            height: 20px;
+            border: 2px solid var(--border);
+            border-top-color: var(--text);
+            border-radius: 50%;
+            animation: spin 1s infinite linear;
+        }
+
+        @keyframes spin {
+            to { transform: rotate(360deg); }
+        }
+
+        /* Toast */
+        .toast {
+            position: absolute;
+            bottom: 32px;
+            left: 50%;
+            transform: translateX(-50%) translateY(100px);
+            background: var(--panel-bg);
+            border: 1px solid var(--border);
+            padding: 12px 24px;
+            border-radius: 8px;
+            z-index: 100;
+            display: flex;
+            align-items: center;
+            gap: 12px;
+            transition: transform 0.3s cubic-bezier(0.16, 1, 0.3, 1);
+            font-size: 13px;
+            box-shadow: 0 10px 30px rgba(0,0,0,0.15);
+        }
+
+        .toast.show {
+            transform: translateX(-50%) translateY(0);
+        }
+
+        /* Lists */
+        .log-list {
+            display: flex;
+            flex-direction: column;
+            gap: 12px;
+            max-height: 350px;
+            overflow-y: auto;
+            margin-top: 16px;
+        }
+
+        .log-item {
+            padding: 16px;
+            background: var(--bg);
+            border: 1px solid var(--border);
+            border-radius: 8px;
+            font-size: 13px;
+        }
+
+        .log-date {
+            color: var(--text-muted);
+            font-weight: 600;
+            margin-bottom: 6px;
+        }
+
+        .metadata-table {
+            width: 100%;
+            border-collapse: collapse;
+            margin: 20px 0;
+            font-size: 13px;
+        }
+
+        .metadata-table td {
+            padding: 10px 0;
+            border-bottom: 1px solid var(--border);
+        }
+
+        .metadata-table td:first-child {
+            color: var(--text-muted);
+            font-weight: 500;
+            width: 130px;
+        }
+
+        .note-body {
+            font-size: 14px;
+            line-height: 1.6;
+            margin-top: 20px;
+            white-space: pre-wrap;
+        }
+
+        /* Help Box styling */
+        .help-card {
+            background: var(--panel-bg);
+            border: 1px solid var(--border);
+            border-radius: 12px;
+            padding: 24px;
+            margin-bottom: 24px;
+            font-size: 13.5px;
+            line-height: 1.6;
+            color: var(--text-muted);
+        }
+
+        .help-card h4 {
+            color: var(--text);
+            font-size: 14px;
+            font-weight: 600;
+            margin-bottom: 8px;
+        }
+
+        .help-card ul {
+            list-style: none;
+            display: flex;
+            flex-direction: column;
+            gap: 6px;
+            margin-top: 10px;
+        }
+
+        .help-card li::before {
+            content: "• ";
+            color: var(--text);
+            margin-right: 6px;
+        }
+
+        /* Exclusion Badges inside Settings */
+        .exclude-badge {
+            background: var(--border);
+            color: var(--text);
+            padding: 6px 12px;
+            border-radius: 6px;
+            font-size: 12px;
+            display: flex;
+            align-items: center;
+            gap: 8px;
+            font-weight: 500;
+        }
+
+        .exclude-badge .remove-btn {
+            cursor: pointer;
+            font-weight: 800;
+            color: var(--text-muted);
+            transition: color 0.2s ease;
+        }
+
+        .exclude-badge .remove-btn:hover {
+            color: var(--error);
+        }
+
+        /* Scan File Item */
+        .scan-file-item {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            padding: 10px 16px;
+            background: var(--panel-bg);
+            border: 1px solid var(--border);
+            border-radius: 8px;
+            font-size: 13px;
+        }
+    </style>
+</head>
+<body>
+
+    <!-- Sidebar Navigation -->
+    <div class="sidebar">
+        <div class="logo-area">
+            <div class="logo-icon">W</div>
+            <div class="logo-text" data-i18n="logo_title">Memex-Wiki</div>
+        </div>
+
+        <ul class="nav-list">
+            <li class="nav-item active" data-page="graph">
+                <div class="nav-item-inner">
+                    <span class="icon">🕸️</span>
+                    <span data-i18n="nav_graph">3D Граф</span>
+                </div>
+            </li>
+            <li class="nav-item" data-page="search">
+                <div class="nav-item-inner">
+                    <span class="icon">🔍</span>
+                    <span data-i18n="nav_search">Поиск</span>
+                </div>
+            </li>
+            <li class="nav-item" data-page="ingest">
+                <div class="nav-item-inner">
+                    <span class="icon">📥</span>
+                    <span data-i18n="nav_ingest">Импорт</span>
+                </div>
+            </li>
+            <li class="nav-item" data-page="linter">
+                <div class="nav-item-inner">
+                    <span class="icon">🛡️</span>
+                    <span data-i18n="nav_linter">Линтер</span>
+                </div>
+            </li>
+            <li class="nav-item" data-page="about">
+                <div class="nav-item-inner">
+                    <span class="icon">ℹ️</span>
+                    <span data-i18n="nav_about">О системе</span>
+                </div>
+            </li>
+            <li class="nav-item" data-page="settings">
+                <div class="nav-item-inner">
+                    <span class="icon">⚙️</span>
+                    <span data-i18n="nav_settings">Настройки</span>
+                </div>
+            </li>
+        </ul>
+        <div class="sidebar-footer" style="margin-top: auto; padding-top: 16px; border-top: 1px solid var(--border); font-size: 11px; color: var(--text-muted); display: flex; flex-direction: column; gap: 6px;">
+            <div><span data-i18n="sidebar_version">Версия</span> <span style="color: var(--accent); font-weight: 600;">0.1</span></div>
+            <a href="https://github.com/litvaerickson-spec/Memex-Wiki" target="_blank" style="color: var(--text-muted); text-decoration: none; display: flex; align-items: center; gap: 6px; transition: color 0.2s;" onmouseover="this.style.color='var(--text)'" onmouseout="this.style.color='var(--text-muted)'">
+                <span>🐙</span> <span data-i18n="sidebar_github">Репозиторий GitHub</span>
+            </a>
+        </div>
+    </div>
+
+    <!-- Main Content Container -->
+    <div class="main-container">
+
+        <!-- PAGE: GRAPH (3D) -->
+        <div id="page-graph" class="page active">
+            <div class="graph-container" id="3d-graph-canvas"></div>
+            
+            <div class="graph-overlay-panel">
+                <h3 data-i18n="graph_title">Визуализация 3D</h3>
+                <p style="font-size: 11px; color: var(--text-muted); margin-top: 4px; line-height: 1.4;" data-i18n="graph_desc">
+                    Зажмите ЛКМ и тяните для вращения в 3D. ПКМ — панорамирование. Колесо мыши — масштаб.
+                </p>
+                <div class="graph-legend">
+                    <div class="legend-item">
+                        <div class="legend-color" style="background-color: #6366f1;"></div>
+                        <span data-i18n="graph_legend_concept">Концепт (Concept)</span>
+                    </div>
+                    <div class="legend-item">
+                        <div class="legend-color" style="background-color: #71717a;"></div>
+                        <span data-i18n="graph_legend_summary">Выжимка (Summary)</span>
+                    </div>
+                    <div class="legend-item">
+                        <div class="legend-color" style="background-color: #d946ef;"></div>
+                        <span data-i18n="graph_legend_system">Системный (System)</span>
+                    </div>
+                </div>
+                <button class="btn btn-secondary" onclick="loadGraph()" style="margin-top: 20px; width: 100%; padding: 8px 12px; font-size: 12px;" data-i18n="btn_refresh_graph">
+                    🔄 Обновить граф
+                </button>
+            </div>
+
+            <!-- Details Sidebar -->
+            <div class="details-sidebar" id="details-panel">
+                <button class="close-btn" onclick="closeDetails()" data-i18n="btn_close">Закрыть ✕</button>
+                <h2 id="detail-title" style="font-size: 18px; font-weight: 600; letter-spacing: -0.3px;" data-i18n="note_details_title">Детали заметки</h2>
+                
+                <table class="metadata-table">
+                    <tr>
+                        <td data-i18n="note_type">Тип:</td>
+                        <td id="detail-type">-</td>
+                    </tr>
+                    <tr>
+                        <td data-i18n="note_updated">Обновлено:</td>
+                        <td id="detail-date">-</td>
+                    </tr>
+                    <tr>
+                        <td data-i18n="note_tags">Теги:</td>
+                        <td id="detail-tags">-</td>
+                    </tr>
+                    <tr>
+                        <td data-i18n="note_relations">Связи:</td>
+                        <td id="detail-relations">-</td>
+                    </tr>
+                </table>
+
+                <h3 style="font-size: 13px; font-weight: 600; color: var(--text-muted); text-transform: uppercase; margin-top: 20px; border-bottom: 1px solid var(--border); padding-bottom: 8px;" data-i18n="note_content_h">Содержание</h3>
+                <div class="note-body" id="detail-body">-</div>
+            </div>
+        </div>
+
+        <!-- PAGE: SEARCH -->
+        <div id="page-search" class="page">
+            <div class="page-header">
+                <div class="page-title-group">
+                    <h1 class="page-title" data-i18n="search_title">Поиск по памяти</h1>
+                    <p class="page-subtitle" data-i18n="search_subtitle">Точечный семантический поиск по концептам методом RLM-фильтрации</p>
+                </div>
+                <div class="help-badge">
+                    <span data-i18n="help_badge">💡 Справка</span>
+                    <div class="help-tooltip" data-i18n="search_help_tooltip">
+                        Здесь вы можете задать любой вопрос по вашим проектам. Система RLM автоматически отсечет лишние чанки документов, предоставив только краткую суть с точной ссылкой на источник (source: файл).
+                    </div>
+                </div>
+            </div>
+
+            <div class="help-card">
+                <h4 data-i18n="search_how_works_h">Как работает RLM-поиск?</h4>
+                <p data-i18n="search_how_works_p">Система нарезает файлы на чанки по 3000 токенов и опрашивает выбранного провайдера (Gemini или Ollama) в строго однопоточном режиме. Это исключает зависание компьютера и перегрузку контекста.</p>
+            </div>
+            
+            <div class="glass-panel">
+                <div class="search-box">
+                    <input type="text" id="query-input" data-i18n-placeholder="search_input_placeholder" placeholder="Введите ваш вопрос...">
+                    <button class="btn" id="query-btn" onclick="runQuery()" data-i18n="btn_find">Найти</button>
+                </div>
+            </div>
+
+            <div class="loader" id="query-loader">
+                <div class="spinner"></div>
+                <span data-i18n="search_loading">Выполняется опрос чанков моделью...</span>
+            </div>
+
+            <div class="glass-panel result-panel" id="query-result-panel" style="display: none;">
+                <div class="result-title" data-i18n="search_result_title">Синтезированный ответ памяти</div>
+                <div class="result-content" id="query-result-text"></div>
+            </div>
+        </div>
+
+        <!-- PAGE: INGEST -->
+        <div id="page-ingest" class="page">
+            <div class="page-header">
+                <div class="page-title-group">
+                    <h1 class="page-title" data-i18n="ingest_title">Импорт документов</h1>
+                    <p class="page-subtitle" data-i18n="ingest_subtitle">Добавление исходных файлов проектов в базу знаний</p>
+                </div>
+                <div class="help-badge">
+                    <span data-i18n="help_badge">💡 Справка</span>
+                    <div class="help-tooltip" data-i18n="ingest_help_tooltip">
+                        Импорт преобразует исходные файлы проектов (код, readme, txt) в связанные страницы концептов. Запись оригинальных файлов из raw-папки строго запрещена на запись.
+                    </div>
+                </div>
+            </div>
+
+            <div class="help-card">
+                <h4 data-i18n="ingest_cot_h">Двухэтапный синтаксический анализ:</h4>
+                <p data-i18n="ingest_cot_p">При импорте модель сначала строит Chain-of-Thought карту сущностей для сопоставления синонимов, а затем аккуратно создаёт Markdown-страницы и делает автоматический коммит изменений в Git.</p>
+            </div>
+
+            <!-- Single ingest -->
+            <div class="glass-panel">
+                <div class="form-group">
+                    <label data-i18n="ingest_path_label">Путь к файлу проекта</label>
+                    <div class="search-box">
+                        <input type="text" id="ingest-path" data-i18n-placeholder="ingest_path_placeholder" placeholder="Пример: Antigravity/09_Obsidian_Graph_Antigravity/requirements.txt">
+                        <button class="btn" id="ingest-btn" onclick="runIngest()" data-i18n="btn_ingest">Импортировать</button>
+                    </div>
+                    <p style="font-size: 11px; color: var(--text-muted); margin-top: 6px;" data-i18n="ingest_path_desc">
+                        Относительный путь относительно корневой папки проектов.
+                    </p>
+                </div>
+            </div>
+
+            <!-- Project scanner -->
+            <div class="glass-panel">
+                <div class="result-title" data-i18n="ingest_scan_section">Сканирование и принудительный импорт файлов</div>
+                <div style="font-size: 12.5px; color: var(--text-muted); margin-bottom: 16px;" data-i18n="ingest_scan_desc">
+                    Сканирует подключенную рабочую папку на предмет новых или обновленных файлов проектов, которые еще не перенесены в Obsidian.
+                </div>
+                <div style="display: flex; gap: 12px; margin-bottom: 20px;">
+                    <button class="btn" id="scan-raw-btn" onclick="scanRawFiles()" data-i18n="btn_scan_projects">Сканировать проекты</button>
+                    <button class="btn btn-secondary" id="ingest-all-btn" onclick="ingestAllScanned()" style="display: none;" data-i18n="btn_ingest_all">Импортировать все найденные</button>
+                </div>
+                
+                <div class="loader" id="scan-loader">
+                    <div class="spinner"></div>
+                    <span data-i18n="ingest_scan_loading">Анализ файлов в рабочей папке...</span>
+                </div>
+
+                <div id="scan-results-wrapper" style="display: none; border: 1px solid var(--border); border-radius: 8px; background: var(--bg); padding: 16px; max-height: 400px; overflow-y: auto;">
+                    <div id="scan-results-empty" style="color: var(--text-muted); font-size: 13px;" data-i18n="ingest_scan_empty">Все файлы актуальны. Новых изменений не найдено.</div>
+                    
+                    <div id="new-files-section" style="display: none; margin-bottom: 20px;">
+                        <h4 style="font-size: 13px; color: var(--success); text-transform: uppercase; margin-bottom: 10px;" data-i18n="ingest_new_files_h">Новые файлы в проектах</h4>
+                        <div id="new-files-list" style="display: flex; flex-direction: column; gap: 8px;"></div>
+                    </div>
+                    
+                    <div id="modified-files-section" style="display: none;">
+                        <h4 style="font-size: 13px; color: var(--accent); text-transform: uppercase; margin-bottom: 10px;" data-i18n="ingest_modified_files_h">Измененные файлы</h4>
+                        <div id="modified-files-list" style="display: flex; flex-direction: column; gap: 8px;"></div>
+                    </div>
+                </div>
+            </div>
+
+            <div class="loader" id="ingest-loader">
+                <div class="spinner"></div>
+                <span data-i18n="ingest_loading">Идет разбор сущностей моделью...</span>
+            </div>
+
+            <div class="glass-panel">
+                <div class="result-title" data-i18n="ingest_log_title">Лог последних импортов</div>
+                <div class="log-list" id="ingest-log-list"></div>
+            </div>
+        </div>
+
+        <!-- PAGE: LINTER -->
+        <div id="page-linter" class="page">
+            <div class="page-header">
+                <div class="page-title-group">
+                    <h1 class="page-title" data-i18n="linter_title">Линтер графа связей</h1>
+                    <p class="page-subtitle" data-i18n="linter_subtitle">Проверка целостности базы знаний и связей</p>
+                </div>
+                <div class="help-badge">
+                    <span data-i18n="help_badge">💡 Справка</span>
+                    <div class="help-tooltip" data-i18n="linter_help_tooltip">
+                        Линтер сканирует всю папку wiki/, проверяет корректность YAML-метаданных, находит сломанные вики-ссылки [[link]] и изолированные страницы-сироты.
+                    </div>
+                </div>
+            </div>
+
+            <div class="glass-panel">
+                <button class="btn" onclick="runLinter()" data-i18n="btn_run_linter">Запустить аудит целостности</button>
+            </div>
+
+            <div class="loader" id="linter-loader">
+                <div class="spinner"></div>
+                <span data-i18n="linter_loading">Выполняется анализ структуры файлов графа...</span>
+            </div>
+
+            <!-- Structured Linter Result Panel -->
+            <div class="glass-panel result-panel" id="linter-result-panel" style="display: none;">
+                <div class="result-title" data-i18n="linter_report_title">Отчет аудита графа связей</div>
+                
+                <div style="display: flex; gap: 16px; margin-bottom: 20px;">
+                    <div style="flex: 1; padding: 12px; border: 1px solid var(--border); border-radius: 8px; background: var(--bg); text-align: center;">
+                        <div style="font-size: 20px; font-weight: 700;" id="lint-stat-checked">0</div>
+                        <div style="font-size: 11px; color: var(--text-muted);" data-i18n="linter_stat_checked">Проверено файлов</div>
+                    </div>
+                    <div style="flex: 1; padding: 12px; border: 1px solid var(--border); border-radius: 8px; background: var(--bg); text-align: center; border-left: 3px solid var(--error);">
+                        <div style="font-size: 20px; font-weight: 700; color: var(--error);" id="lint-stat-errors">0</div>
+                        <div style="font-size: 11px; color: var(--text-muted);" data-i18n="linter_stat_errors">Ошибки</div>
+                    </div>
+                    <div style="flex: 1; padding: 12px; border: 1px solid var(--border); border-radius: 8px; background: var(--bg); text-align: center; border-left: 3px solid var(--accent);">
+                        <div style="font-size: 20px; font-weight: 700; color: var(--accent);" id="lint-stat-warnings">0</div>
+                        <div style="font-size: 11px; color: var(--text-muted);" data-i18n="linter_stat_warnings">Предупреждения</div>
+                    </div>
+                </div>
+
+                <div id="linter-structured-content" style="display: flex; flex-direction: column; gap: 16px;"></div>
+                
+                <details style="margin-top: 24px; border-top: 1px solid var(--border); padding-top: 16px;">
+                    <summary style="cursor: pointer; font-size: 12px; color: var(--text-muted);" data-i18n="linter_raw_report">Показать исходный отчет (Markdown)</summary>
+                    <div class="result-content" id="linter-result-text" style="margin-top: 10px; max-height: 300px;"></div>
+                </details>
+            </div>
+        </div>
+
+        <!-- PAGE: ABOUT -->
+        <div id="page-about" class="page">
+            <div class="page-header">
+                <div class="page-title-group">
+                    <h1 class="page-title" data-i18n="about_title">О системе Memex-Wiki</h1>
+                    <p class="page-subtitle" data-i18n="about_subtitle">Архитектура, принципы работы и преимущества гибридной памяти</p>
+                </div>
+            </div>
+
+            <div class="glass-panel" style="line-height: 1.6; max-width: 900px;">
+                <h2 style="font-size: 18px; font-weight: 600; margin-bottom: 12px;" data-i18n="about_purpose_h">Назначение гибридной памяти</h2>
+                <p style="margin-bottom: 20px; color: var(--text-muted);" data-i18n="about_purpose_p">
+                    Система спроектирована как локальный цифровой «второй мозг» (Second Brain). Она решает фундаментальные проблемы классического динамического RAG (Retrieval-Augmented Generation): зависимость от интернет-подключения, высокая стоимость облачных запросов, утечка конфиденциальных данных и «забывание информации в середине контекста» при передаче больших объемов кода.
+                </p>
+
+                <!-- Как это устроено простыми словами -->
+                <h2 style="font-size: 16px; font-weight: 600; margin-top: 28px; margin-bottom: 16px; display: flex; align-items: center; gap: 8px;" data-i18n="about_how_works_h">Как это работает простыми словами</h2>
+                
+                <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 20px; margin-bottom: 32px;">
+                    <!-- Левая колонка: Процесс в 4 шага (красивая вертикальная блок-схема) -->
+                    <div style="border: 1px solid var(--border); padding: 24px; border-radius: 12px; background: var(--bg); display: flex; flex-direction: column; gap: 16px;">
+                        <strong style="font-size: 14px; font-weight: 600; display: block; margin-bottom: 8px; color: var(--text); border-bottom: 1px solid var(--border); padding-bottom: 8px;" data-i18n="about_step_process_h">🔄 Процесс в 4 шага</strong>
+                        
+                        <div style="display: flex; flex-direction: column; gap: 12px;">
+                            <!-- Шаг 1 -->
+                            <div style="display: flex; gap: 12px; align-items: flex-start; position: relative;">
+                                <div style="width: 24px; height: 24px; border-radius: 50%; background: var(--accent-muted); color: var(--accent); display: flex; align-items: center; justify-content: center; font-size: 11px; font-weight: 700; flex-shrink: 0; border: 1px solid var(--accent);">1</div>
+                                <div>
+                                    <h4 style="font-size: 13px; font-weight: 600; margin-bottom: 2px; color: var(--text);" data-i18n="about_step1_title">Загрузка файлов:</h4>
+                                    <p style="font-size: 12px; color: var(--text-muted); line-height: 1.4;" data-i18n="about_step1_desc">Вы добавляете рабочие файлы проектов в папку.</p>
+                                </div>
+                            </div>
+                            
+                            <!-- Стрелочка -->
+                            <div style="padding-left: 11px; margin: -6px 0; color: var(--border); font-size: 12px; line-height: 1;">↓</div>
+
+                            <!-- Шаг 2 -->
+                            <div style="display: flex; gap: 12px; align-items: flex-start;">
+                                <div style="width: 24px; height: 24px; border-radius: 50%; background: rgba(16, 185, 129, 0.1); color: var(--success); display: flex; align-items: center; justify-content: center; font-size: 11px; font-weight: 700; flex-shrink: 0; border: 1px solid var(--success);">2</div>
+                                <div>
+                                    <h4 style="font-size: 13px; font-weight: 600; margin-bottom: 2px; color: var(--text);" data-i18n="about_step2_title">Атомизация знаний:</h4>
+                                    <p style="font-size: 12px; color: var(--text-muted); line-height: 1.4;" data-i18n="about_step2_desc">ИИ читает файлы один раз и выделяет из них ключевые понятия.</p>
+                                </div>
+                            </div>
+
+                            <!-- Стрелочка -->
+                            <div style="padding-left: 11px; margin: -6px 0; color: var(--border); font-size: 12px; line-height: 1;">↓</div>
+
+                            <!-- Шаг 3 -->
+                            <div style="display: flex; gap: 12px; align-items: flex-start;">
+                                <div style="width: 24px; height: 24px; border-radius: 50%; background: var(--accent-muted); color: var(--accent); display: flex; align-items: center; justify-content: center; font-size: 11px; font-weight: 700; flex-shrink: 0; border: 1px solid var(--accent);">3</div>
+                                <div>
+                                    <h4 style="font-size: 13px; font-weight: 600; margin-bottom: 2px; color: var(--text);" data-i18n="about_step3_title">Связывание ссылками:</h4>
+                                    <p style="font-size: 12px; color: var(--text-muted); line-height: 1.4;" data-i18n="about_step3_desc">Каждое понятие ИИ связывает с другими понятиями.</p>
+                                </div>
+                            </div>
+
+                            <!-- Стрелочка -->
+                            <div style="padding-left: 11px; margin: -6px 0; color: var(--border); font-size: 12px; line-height: 1;">↓</div>
+
+                            <!-- Шаг 4 -->
+                            <div style="display: flex; gap: 12px; align-items: flex-start;">
+                                <div style="width: 24px; height: 24px; border-radius: 50%; background: rgba(239, 68, 68, 0.1); color: var(--error); display: flex; align-items: center; justify-content: center; font-size: 11px; font-weight: 700; flex-shrink: 0; border: 1px solid var(--error);">4</div>
+                                <div>
+                                    <h4 style="font-size: 13px; font-weight: 600; margin-bottom: 2px; color: var(--text);" data-i18n="about_step4_title">Семантический поиск:</h4>
+                                    <p style="font-size: 12px; color: var(--text-muted); line-height: 1.4;" data-i18n="about_step4_desc">При запросе ИИ находит нужные понятия на карте и собирает из них ответ.</p>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+
+                    <!-- Правая колонка: Роль графа связей (красивое объяснение с интерактивным эффектом) -->
+                    <div style="border: 1px solid var(--border); padding: 24px; border-radius: 12px; background: var(--bg); display: flex; flex-direction: column; justify-content: space-between;">
+                        <div>
+                            <strong style="font-size: 14px; font-weight: 600; display: block; margin-bottom: 12px; color: var(--text); border-bottom: 1px solid var(--border); padding-bottom: 8px;" data-i18n="about_graph_concept_h">🕸️ Роль графа связей</strong>
+                            <p style="font-size: 12.5px; color: var(--text-muted); line-height: 1.6; margin-bottom: 16px;" data-i18n="about_graph_concept_p">
+                                Представьте карту дорог, где города — это темы или файлы ваших проектов (узлы графа), а дороги — это связи между ними. Вместо слепого поиска по тексту, ИИ мгновенно перемещается по этим дорогам от темы к теме. Это позволяет ему удерживать картину вашего проекта целиком, не галлюцинировать и находить неочевидные взаимосвязи.
+                            </p>
+                        </div>
+                        
+                        <!-- Визуализация мини-схемы (SVG или стилизованный CSS-граф) -->
+                        <div style="background: var(--panel-bg); border: 1px solid var(--border); border-radius: 8px; padding: 12px; display: flex; justify-content: center; align-items: center; min-height: 80px; position: relative; overflow: hidden;">
+                            <div style="position: absolute; width: 100%; height: 100%; top:0; left:0; pointer-events: none; opacity: 0.15; background-image: radial-gradient(var(--text-muted) 1px, transparent 0); background-size: 8px 8px;"></div>
+                            
+                            <!-- Стилизованные кружочки-ноды и линии связи -->
+                            <div style="display: flex; justify-content: space-around; width: 100%; align-items: center; position: relative; z-index: 1;">
+                                <div style="display: flex; flex-direction: column; align-items: center; gap: 4px;">
+                                    <div style="width: 14px; height: 14px; border-radius: 50%; background: var(--accent); box-shadow: 0 0 8px var(--accent);"></div>
+                                    <span style="font-size: 9px; color: var(--text-muted);">Код</span>
+                                </div>
+                                <div style="width: 40px; height: 1px; background: var(--border); position: relative;">
+                                    <div style="position: absolute; top: -2px; left: 18px; width: 5px; height: 5px; border-radius: 50%; background: var(--accent-muted);"></div>
+                                </div>
+                                <div style="display: flex; flex-direction: column; align-items: center; gap: 4px;">
+                                    <div style="width: 18px; height: 18px; border-radius: 50%; background: var(--success); box-shadow: 0 0 10px var(--success);"></div>
+                                    <span style="font-size: 9px; color: var(--text);">Связь [[Concept]]</span>
+                                </div>
+                                <div style="width: 40px; height: 1px; background: var(--border); position: relative;">
+                                    <div style="position: absolute; top: -2px; left: 18px; width: 5px; height: 5px; border-radius: 50%; background: var(--accent-muted);"></div>
+                                </div>
+                                <div style="display: flex; flex-direction: column; align-items: center; gap: 4px;">
+                                    <div style="width: 14px; height: 14px; border-radius: 50%; background: var(--accent); box-shadow: 0 0 8px var(--accent);"></div>
+                                    <span style="font-size: 9px; color: var(--text-muted);">Заметки</span>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+
+                <div style="display: flex; justify-content: space-between; gap: 24px; margin: 32px 0; flex-wrap: wrap;">
+                    <div style="flex: 1; min-width: 250px; background: var(--bg); border: 1px solid var(--border); padding: 20px; border-radius: 8px;">
+                        <div style="font-size: 13px; font-weight: 700; color: var(--accent); text-transform: uppercase; margin-bottom: 8px;" data-i18n="about_compilation_h">1. Накопление (по Карпатому)</div>
+                        <p style="font-size: 12.5px; color: var(--text-muted);" data-i18n="about_compilation_p">
+                            <b>Инкрементальная компиляция знаний:</b> данные перерабатываются ИИ в момент добавления (ingest). Файлы сжимаются, выделяются ключевые концепты и встраиваются в связанные Markdown-страницы Obsidian.
+                        </p>
+                    </div>
+                    <div style="flex: 1; min-width: 250px; background: var(--bg); border: 1px solid var(--border); padding: 20px; border-radius: 8px;">
+                        <div style="font-size: 13px; font-weight: 700; color: var(--success); text-transform: uppercase; margin-bottom: 8px;" data-i18n="about_computation_h">2. Вычисление (по MIT RLM)</div>
+                        <p style="font-size: 12.5px; color: var(--text-muted);" data-i18n="about_computation_p">
+                            <b>Контекст как среда выполнения (Sandbox):</b> вместо передачи сырого текста документов в промпт, Root-модель запускает локальный Python-код для поиска, фильтрации и точечного опроса чанков.
+                        </p>
+                    </div>
+                </div>
+
+                <h2 style="font-size: 16px; font-weight: 600; margin-top: 32px; margin-bottom: 12px;" data-i18n="about_principles_h">Ключевые принципы и компоненты</h2>
+                <ul style="list-style: none; display: flex; flex-direction: column; gap: 12px; margin-bottom: 24px; padding-left: 0;">
+                    <li style="display: flex; gap: 12px; align-items: flex-start;">
+                        <span style="font-size: 18px;">📂</span>
+                        <div>
+                            <strong style="color: var(--text);" data-i18n="about_storage_h">Хранилище Obsidian (MD + YAML):</strong>
+                            <span style="color: var(--text-muted); font-size: 13.5px;" data-i18n="about_storage_p">Использование Markdown-файлов для заметок. Связи [[Concept]] выступают ребрами графа знаний, а YAML-секция в заголовке хранит метаданные для быстрого разбора кодом.</span>
+                        </div>
+                    </li>
+                    <li style="display: flex; gap: 12px; align-items: flex-start;">
+                        <span style="font-size: 18px;">🐙</span>
+                        <div>
+                            <strong style="color: var(--text);" data-i18n="about_git_h">Контроль версий памяти (Git):</strong>
+                            <span style="color: var(--text-muted); font-size: 13.5px;" data-i18n="about_git_p">Все изменения памяти логируются в репозитории. Вы можете отследить, какие знания ИИ перезаписал, и сделать откат в случае ошибок.</span>
+                        </div>
+                    </li>
+                    <li style="display: flex; gap: 12px; align-items: flex-start;">
+                        <span style="font-size: 18px;">🤖</span>
+                        <div>
+                            <strong style="color: var(--text);" data-i18n="about_models_h">Свобода выбора (Gemini / Ollama):</strong>
+                            <span style="color: var(--text-muted); font-size: 13.5px;" data-i18n="about_models_p">Возможность работать полностью локально без интернета на моделях Qwen/Llama с помощью Ollama, либо переключаться на сверхдешевый Gemini API для объемных задач.</span>
+                        </div>
+                    </li>
+                    <li style="display: flex; gap: 12px; align-items: flex-start;">
+                        <span style="font-size: 18px;">🛡️</span>
+                        <div>
+                            <strong style="color: var(--text);" data-i18n="about_security_h">Безопасность и Редактирование секретов:</strong>
+                            <span style="color: var(--text-muted); font-size: 13.5px;" data-i18n="about_security_p">Бэкенд автоматически вырезает пароли, API-ключи и строки подключения баз данных при обработке сырых материалов, защищая ваши данные.</span>
+                        </div>
+                    </li>
+                </ul>
+
+                <h2 style="font-size: 16px; font-weight: 600; margin-top: 32px; margin-bottom: 12px;" data-i18n="about_advantages_h">Основные преимущества</h2>
+                <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 16px;">
+                    <div style="border: 1px solid var(--border); padding: 16px; border-radius: 8px; background: var(--bg);">
+                        <strong style="font-size: 13.5px; display: block; margin-bottom: 6px; color: var(--text);" data-i18n="about_adv1_h">🔒 100% Локально и Приватно</strong>
+                        <span style="font-size: 12.5px; color: var(--text-muted);" data-i18n="about_adv1_p">При выборе Ollama все данные остаются на вашем компьютере. Информация о ваших проектах никогда не утечет наружу.</span>
+                    </div>
+                    <div style="border: 1px solid var(--border); padding: 16px; border-radius: 8px; background: var(--bg);">
+                        <strong style="font-size: 13.5px; display: block; margin-bottom: 6px; color: var(--text);" data-i18n="about_adv2_h">🧠 Устойчивость к галлюцинациям</strong>
+                        <span style="font-size: 12.5px; color: var(--text-muted);" data-i18n="about_adv2_p">За счет пошаговой компиляции знаний и точного поиска по регулярным выражениям модель синтезирует ответы только на базе реальных фактов.</span>
+                    </div>
+                    <div style="border: 1px solid var(--border); padding: 16px; border-radius: 8px; background: var(--bg);">
+                        <strong style="font-size: 13.5px; display: block; margin-bottom: 6px; color: var(--text);" data-i18n="about_adv3_h">⚡ Экономия контекста ИИ</strong>
+                        <span style="font-size: 12.5px; color: var(--text-muted);" data-i18n="about_adv3_p">Рекурсивная декомпозиция MIT RLM передает ИИ только отфильтрованные строки, решая проблему лимитов токенов и зависания.</span>
+                    </div>
+                    <div style="border: 1px solid var(--border); padding: 16px; border-radius: 8px; background: var(--bg);">
+                        <strong style="font-size: 13.5px; display: block; margin-bottom: 6px; color: var(--text);" data-i18n="about_adv4_h">🔗 Синергия базы знаний</strong>
+                        <span style="font-size: 12.5px; color: var(--text-muted);" data-i18n="about_adv4_p">Автоматическая генерация связей [[Concept]] строит визуальную граф-сеть ваших проектов для удобного ручного или автоматического анализа.</span>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- PAGE: SETTINGS -->
+        <div id="page-settings" class="page">
+            <div class="page-header">
+                <div class="page-title-group">
+                    <h1 class="page-title" data-i18n="settings_title">Настройки системы</h1>
+                    <p class="page-subtitle" data-i18n="settings_subtitle">Настройка LLM, директорий и тем оформления</p>
+                </div>
+                <div class="help-badge">
+                    <span data-i18n="help_badge">💡 Справка</span>
+                    <div class="help-tooltip" data-i18n="settings_help_tooltip">
+                        Вы можете мгновенно переключаться между облачным Gemini API и локальной Ollama. Изменения сохраняются напрямую в config.yaml.
+                    </div>
+                </div>
+            </div>
+
+            <div class="glass-panel" style="max-width: 600px;">
+                <!-- Интерфейс и язык -->
+                <h3 style="font-size: 14px; font-weight: 600; margin-bottom: 16px; border-bottom: 1px solid var(--border); padding-bottom: 8px;" data-i18n="settings_interface_section">Интерфейс</h3>
+                <div class="form-group">
+                    <label data-i18n="settings_lang_label">Язык интерфейса</label>
+                    <div class="toggle-group" id="lang-toggle">
+                        <button class="toggle-group-btn" data-lang="ru">Русский</button>
+                        <button class="toggle-group-btn" data-lang="en">English</button>
+                    </div>
+                </div>
+                <div class="form-group">
+                    <label data-i18n="settings_theme_label">Тема оформления</label>
+                    <div class="toggle-group" id="theme-toggle">
+                        <button class="toggle-group-btn" data-theme="dark" data-i18n="settings_theme_dark">Темная</button>
+                        <button class="toggle-group-btn" data-theme="light" data-i18n="settings_theme_light">Светлая</button>
+                    </div>
+                </div>
+
+                <!-- LLM settings -->
+                <h3 style="font-size: 14px; font-weight: 600; margin-top: 32px; margin-bottom: 16px; border-bottom: 1px solid var(--border); padding-bottom: 8px;" data-i18n="settings_llm_section">LLM Вычислительное ядро</h3>
+                <div class="form-group">
+                    <label data-i18n="settings_provider_label">Провайдер LLM</label>
+                    <div class="toggle-group" id="provider-toggle">
+                        <button class="toggle-group-btn active" data-provider="gemini">Gemini API</button>
+                        <button class="toggle-group-btn" data-provider="ollama">Локальный Ollama</button>
+                    </div>
+                </div>
+
+                <!-- Gemini Fields -->
+                <div id="settings-gemini-fields">
+                    <div class="form-group">
+                        <label data-i18n="settings_gemini_model_label">Модель Gemini</label>
+                        <select id="settings-gemini-model">
+                            <option value="gemini-2.5-flash">gemini-2.5-flash (Recommended)</option>
+                            <option value="gemini-2.5-pro">gemini-2.5-pro</option>
+                        </select>
+                    </div>
+                    <div class="form-group">
+                        <label data-i18n="settings_gemini_key_label">Gemini API Key</label>
+                        <input type="password" id="settings-gemini-key" data-i18n-placeholder="settings_gemini_key_placeholder" placeholder="Оставьте пустым, если задана переменная окружения">
+                    </div>
+                </div>
+
+                <!-- Ollama Fields -->
+                <div id="settings-ollama-fields" style="display: none;">
+                    <div class="form-group">
+                        <label data-i18n="settings_ollama_model_label">Модель Ollama</label>
+                        <select id="settings-ollama-model-select" style="margin-bottom: 8px;">
+                            <option value="" data-i18n="settings_ollama_select_loading">Загрузка моделей...</option>
+                        </select>
+                        <div id="settings-ollama-custom-model-wrapper" style="display: none;">
+                            <input type="text" id="settings-ollama-model" data-i18n-placeholder="settings_ollama_model_placeholder" placeholder="Введите имя модели вручную, например: qwen2.5:3b">
+                        </div>
+                    </div>
+                    
+                    <!-- Downloader -->
+                    <div class="form-group" style="border: 1px solid var(--border); padding: 16px; border-radius: 8px; margin-bottom: 16px; background: var(--bg);">
+                        <label style="font-size: 11px; color: var(--text-muted);" data-i18n="ollama_downloader_title">Скачать модель из библиотеки Ollama</label>
+                        <div style="display: flex; gap: 8px; margin-top: 8px;">
+                            <select id="downloader-model-select" style="flex: 1;">
+                                <option value="qwen2.5:3b">qwen2.5:3b (3.2B, ~2.0GB)</option>
+                                <option value="qwen2.5:7b">qwen2.5:7b (7.4B, ~4.7GB)</option>
+                                <option value="gemma2:2b">gemma2:2b (2.6B, ~1.6GB)</option>
+                                <option value="gemma2:9b">gemma2:9b (9B, ~5.5GB)</option>
+                                <option value="llama3:8b">llama3:8b (8B, ~4.7GB)</option>
+                                <option value="nomic-embed-text:latest">nomic-embed-text:latest (Embedding, ~270MB)</option>
+                                <option value="custom_input" data-i18n="ollama_downloader_custom_opt">Указать имя вручную...</option>
+                            </select>
+                            <button class="btn" style="padding: 8px 16px; font-size: 12px;" onclick="pullOllamaModel()" data-i18n="btn_download">Скачать</button>
+                        </div>
+                        <div id="downloader-custom-input-wrapper" style="display: none; margin-top: 8px;">
+                            <input type="text" id="downloader-custom-input" placeholder="Имя модели, например: deepseek-coder:6.7b" style="padding: 8px 12px; font-size: 12px;">
+                        </div>
+                        
+                        <!-- Progress bar -->
+                        <div id="pull-progress-container" style="display: none; margin-top: 12px;">
+                            <div style="display: flex; justify-content: space-between; font-size: 11px; margin-bottom: 4px;">
+                                <span id="pull-status-text" style="color: var(--text-muted);">Загрузка...</span>
+                                <span id="pull-percentage-text">0%</span>
+                            </div>
+                            <div style="width: 100%; height: 6px; background: var(--border); border-radius: 3px; overflow: hidden;">
+                                <div id="pull-progress-bar" style="width: 0%; height: 100%; background: var(--accent); transition: width 0.3s ease;"></div>
+                            </div>
+                        </div>
+                    </div>
+
+                    <div class="form-group">
+                        <label data-i18n="settings_ollama_url_label">URL Ollama API</label>
+                        <input type="text" id="settings-ollama-url" value="http://localhost:11434/api/generate">
+                    </div>
+                </div>
+
+                <!-- Workspace Directories -->
+                <h3 style="font-size: 14px; font-weight: 600; margin-top: 32px; margin-bottom: 16px; border-bottom: 1px solid var(--border); padding-bottom: 8px;" data-i18n="settings_directories_section">Управление директориями и индексацией</h3>
+                <div class="form-group">
+                    <label data-i18n="settings_vault_path_label">Путь к Obsidian Vault</label>
+                    <input type="text" id="settings-vault-path" placeholder="/path/to/your/Obsidian/Vault/">
+                </div>
+                <div class="form-group">
+                    <label data-i18n="settings_raw_path_label">Путь к папке проектов (Raw Folder)</label>
+                    <input type="text" id="settings-raw-path" placeholder="/path/to/your/projects/directory/">
+                </div>
+                
+                <!-- Exclusion Patterns -->
+                <div class="form-group">
+                    <label data-i18n="settings_exclude_label">Исключения при сканировании (Exclude Patterns)</label>
+                    <div style="font-size: 11px; color: var(--text-muted); margin-bottom: 8px;" data-i18n="settings_exclude_desc">Папки и файлы, которые будут игнорироваться при сканировании и индексировании:</div>
+                    <div id="exclude-list-container" style="display: flex; flex-wrap: wrap; gap: 8px; padding: 12px; border: 1px solid var(--border); border-radius: 8px; background: var(--bg); margin-bottom: 8px; min-height: 50px;"></div>
+                    <div style="display: flex; gap: 8px;">
+                        <input type="text" id="new-exclude-input" data-i18n-placeholder="settings_exclude_add_placeholder" placeholder="Например: dist или *.log" style="padding: 8px 12px; font-size: 13px;">
+                        <button class="btn btn-secondary" style="padding: 8px 16px; font-size: 12px;" onclick="addExcludePattern()" data-i18n="btn_add">Добавить</button>
+                    </div>
+                </div>
+
+                <button class="btn" style="margin-top: 24px; width: 100%;" onclick="saveConfig()" data-i18n="btn_save_settings">Сохранить все настройки</button>
+            </div>
+        </div>
+
+        <!-- TOAST -->
+        <div class="toast" id="toast">
+            <span id="toast-message">Настройки сохранены</span>
+        </div>
+
+        <!-- Панель отладки ошибок -->
+        <div id="debug-error-panel" style="display: none; position: fixed; bottom: 24px; right: 24px; background: rgba(239, 68, 68, 0.95); color: #ffffff; padding: 20px; border-radius: 8px; z-index: 10000; font-family: monospace; font-size: 12px; max-width: 450px; box-shadow: 0 10px 35px rgba(0,0,0,0.6); white-space: pre-wrap; line-height: 1.5; border: 1px solid rgba(255,255,255,0.2);">
+            <div style="font-weight: 700; border-bottom: 1px solid rgba(255,255,255,0.3); padding-bottom: 6px; margin-bottom: 10px; display: flex; justify-content: space-between; align-items: center;">
+                <span>⚠️ КРИТИЧЕСКАЯ ОШИБКА JS:</span>
+                <span style="cursor: pointer; opacity: 0.8;" onclick="this.parentElement.parentElement.style.display='none'">✕</span>
+            </div>
+        </div>
+
+    </div>
+
+    <script>
+        // Localization Dictionaries
+        const translations = {
+            ru: {
+                logo_title: "Memex-Wiki",
+                sidebar_version: "Версия",
+                sidebar_github: "Репозиторий GitHub",
+                nav_graph: "3D Граф",
+                nav_search: "Поиск",
+                nav_ingest: "Импорт",
+                nav_settings: "Настройки",
+                nav_linter: "Линтер",
+                nav_about: "О системе",
+                
+                graph_title: "Визуализация 3D",
+                graph_desc: "Зажмите ЛКМ и тяните для вращения в 3D. ПКМ — панорамирование. Колесо мыши — масштаб.",
+                graph_legend_concept: "Концепт (Concept)",
+                graph_legend_summary: "Выжимка (Summary)",
+                graph_legend_system: "Системный (System)",
+                btn_refresh_graph: "🔄 Обновить граф",
+                note_details_title: "Детали заметки",
+                note_type: "Тип:",
+                note_updated: "Обновлено:",
+                note_tags: "Теги:",
+                note_relations: "Связи:",
+                note_content_h: "Содержание",
+                btn_close: "Закрыть ✕",
+                
+                search_title: "Поиск по памяти",
+                search_subtitle: "Точечный семантический поиск по концептам методом RLM-фильтрации",
+                help_badge: "💡 Справка",
+                search_help_tooltip: "Здесь вы можете задать любой вопрос по вашим проектам. Система RLM автоматически отсечет лишние чанки документов, предоставив только краткую суть с точной ссылкой на источник (source: файл).",
+                search_how_works_h: "Как работает RLM-поиск?",
+                search_how_works_p: "Система нарезает файлы на чанки по 3000 токенов и опрашивает выбранного провайдера (Gemini или Ollama) в строго однопоточном режиме. Это исключает зависание компьютера и перегрузку контекста.",
+                search_input_placeholder: "Введите ваш вопрос...",
+                btn_find: "Найти",
+                search_loading: "Выполняется опрос чанков моделью...",
+                search_result_title: "Синтезированный ответ памяти",
+                
+                ingest_title: "Импорт документов",
+                ingest_subtitle: "Добавление исходных файлов проектов в базу знаний",
+                ingest_help_tooltip: "Импорт преобразует исходные файлы проектов (код, readme, txt) в связанные страницы концептов. Запись оригинальных файлов из raw-папки строго запрещена на запись.",
+                ingest_cot_h: "Двухэтапный синтаксический анализ:",
+                ingest_cot_p: "При импорте модель сначала строит Chain-of-Thought карту сущностей для сопоставления синонимов, а затем аккуратно создаёт Markdown-страницы и делает автоматический коммит изменений в Git.",
+                ingest_path_label: "Путь к файлу проекта",
+                ingest_path_placeholder: "Пример: Antigravity/09_Obsidian_Graph_Antigravity/requirements.txt",
+                btn_ingest: "Импортировать",
+                ingest_path_desc: "Относительный путь относительно корневой папки проектов (настраивается в параметрах raw_folder_path).",
+                ingest_loading: "Идет разбор сущностей моделью...",
+                ingest_log_title: "Лог последних импортов",
+                ingest_log_empty: "История импортов пуста.",
+                ingest_scan_section: "Проверка обновлений в проектах (Сканирование raw)",
+                ingest_scan_desc: "Сканирует подключенную рабочую папку на предмет новых или обновленных файлов проектов, которые еще не перенесены в Obsidian.",
+                btn_scan_projects: "Сканировать проекты",
+                btn_ingest_all: "Импортировать все найденные",
+                ingest_scan_loading: "Анализ файлов в рабочей папке...",
+                ingest_scan_empty: "Все файлы актуальны. Новых изменений не найдено.",
+                ingest_new_files_h: "Новые файлы в проектах",
+                ingest_modified_files_h: "Измененные файлы",
+                btn_file_import: "Импорт",
+                
+                settings_title: "Настройки системы",
+                settings_subtitle: "Настройка LLM, директорий и тем оформления",
+                settings_help_tooltip: "Вы можете мгновенно переключаться между облачным Gemini API и локальной Ollama. Изменения сохраняются напрямую в config.yaml.",
+                settings_interface_section: "Интерфейс",
+                settings_lang_label: "Язык интерфейса",
+                settings_theme_label: "Тема оформления",
+                settings_theme_dark: "Темная",
+                settings_theme_light: "Светлая",
+                settings_llm_section: "LLM Вычислительное ядро",
+                settings_provider_label: "Провайдер LLM",
+                settings_gemini_model_label: "Модель Gemini",
+                settings_gemini_key_label: "Gemini API Key",
+                settings_gemini_key_placeholder: "Оставьте пустым, если задана переменная окружения",
+                settings_ollama_model_label: "Модель Ollama",
+                settings_ollama_select_loading: "Загрузка моделей...",
+                settings_ollama_model_placeholder: "Введите имя модели вручную, например: qwen2.5:3b",
+                ollama_downloader_title: "Скачать модель из библиотеки Ollama",
+                ollama_downloader_custom_opt: "Указать имя вручную...",
+                btn_download: "Скачать",
+                settings_ollama_url_label: "URL Ollama API",
+                settings_directories_section: "Управление директориями и индексацией",
+                settings_vault_path_label: "Путь к Obsidian Vault",
+                settings_raw_path_label: "Путь к папке проектов (Raw Folder)",
+                settings_exclude_label: "Исключения при сканировании (Exclude Patterns)",
+                settings_exclude_desc: "Папки и файлы, которые будут игнорироваться при сканировании и индексировании:",
+                settings_exclude_add_placeholder: "Например: dist или *.log",
+                btn_add: "Добавить",
+                btn_save_settings: "Сохранить все настройки",
+                toast_saved: "Настройки сохранены в config.yaml",
+                toast_save_err: "Ошибка сохранения настроек: ",
+                toast_load_err: "Ошибка загрузки конфигурации: ",
+                
+                linter_title: "Линтер графа связей",
+                linter_subtitle: "Проверка целостности базы знаний и связей",
+                linter_help_tooltip: "Линтер сканирует всю папку wiki/, проверяет корректность YAML-метаданных, находит сломанные вики-ссылки [[link]] и изолированные страницы-сироты.",
+                btn_run_linter: "Запустить аудит целостности",
+                linter_loading: "Выполняется анализ структуры файлов графа...",
+                linter_report_title: "Отчет аудита графа связей",
+                linter_stat_checked: "Проверено файлов",
+                linter_stat_errors: "Ошибки",
+                linter_stat_warnings: "Предупреждения",
+                linter_raw_report: "Показать исходный отчет (Markdown)",
+                linter_report_empty: "Отчет пуст.",
+                linter_recommendation_label: "💡 Рекомендация:",
+                linter_errors_header: "Критические ошибки (требуют исправления)",
+                linter_warnings_header: "Предупреждения",
+                linter_success_msg: "Проверка целостности успешно пройдена! Ошибок и замечаний не обнаружено.",
+                
+                about_title: "О системе Memex-Wiki",
+                about_subtitle: "Архитектура, принципы работы и преимущества гибридной памяти",
+                about_purpose_h: "Назначение гибридной памяти",
+                about_purpose_p: "Система спроектирована как локальный цифровой «второй мозг» (Second Brain). Она решает фундаментальные проблемы классического динамического RAG (Retrieval-Augmented Generation): зависимость от интернет-подключения, высокая стоимость облачных запросов, утечка конфиденциальных данных и «забывание информации в середине контекста» при передаче больших объемов кода.",
+                about_how_works_h: "Как это работает простыми словами",
+                about_step_process_h: "🔄 Процесс в 4 шага",
+                about_step1_title: "Загрузка файлов:",
+                about_step1_desc: "Вы добавляете рабочие файлы проектов в папку.",
+                about_step2_title: "Атомизация знаний:",
+                about_step2_desc: "ИИ читает файлы один раз и выделяет из них ключевые понятия.",
+                about_step3_title: "Связывание ссылками:",
+                about_step3_desc: "Каждое понятие ИИ связывает с другими понятиями.",
+                about_step4_title: "Семантический поиск:",
+                about_step4_desc: "При запросе ИИ находит нужные понятия на карте и собирает из них ответ.",
+                about_graph_concept_h: "🕸️ Роль графа связей",
+                about_graph_concept_p: "Представьте карту дорог, где города — это темы или файлы ваших проектов (узлы графа), а дороги — это связи между ними. Вместо слепого поиска по тексту, ИИ мгновенно перемещается по этим дорогам от темы к теме. Это позволяет ему удерживать картину вашего проекта целиком, не галлюцинировать и находить неочевидные взаимосвязи.",
+                about_compilation_h: "1. Накопление (по Карпатому)",
+                about_compilation_p: "<b>Инкрементальная компиляция знаний:</b> данные перерабатываются ИИ в момент добавления (ingest). Файлы сжимаются, выделяются ключевые концепты и встраиваются в связанные Markdown-страницы Obsidian.",
+                about_computation_h: "2. Вычисление (по MIT RLM)",
+                about_computation_p: "<b>Контекст как среда выполнения (Sandbox):</b> вместо передачи сырого текста документов в промпт, Root-модель запускает локальный Python-код для поиска, фильтрации и точечного опроса чанков.",
+                about_principles_h: "Ключевые принципы и компоненты",
+                about_storage_h: "Хранилище Obsidian (MD + YAML):",
+                about_storage_p: "Использование Markdown-файлов для заметок. Связи [[Concept]] выступают ребрами графа знаний, а YAML-секция в заголовке хранит метаданные для быстрого разбора кодом.",
+                about_git_h: "Контроль версий памяти (Git):",
+                about_git_p: "Все изменения памяти логируются в репозитории. Вы можете отследить, какие знания ИИ перезаписал, и сделать откат в случае ошибок.",
+                about_models_h: "Свобода выбора (Gemini / Ollama):",
+                about_models_p: "Возможность работать полностью локально без интернета на моделях Qwen/Llama с помощью Ollama, либо переключаться на сверхдешевый Gemini API для объемных задач.",
+                about_security_h: "Безопасность и Редактирование секретов:",
+                about_security_p: "Бэкенд автоматически вырезает пароли, API-ключи и строки подключения баз данных при обработке сырых материалов, защищая ваши данные.",
+                about_advantages_h: "Основные преимущества",
+                about_adv1_h: "🔒 100% Локально и Приватно",
+                about_adv1_p: "При выборе Ollama все данные остаются на вашем компьютере. Информация о ваших проектах никогда не утечет наружу.",
+                about_adv2_h: "🧠 Устойчивость к галлюцинациям",
+                about_adv2_p: "За счет пошаговой компиляции знаний и точного поиска по регулярным выражениям модель синтезирует ответы только на базе реальных фактов.",
+                about_adv3_h: "⚡ Экономия контекста ИИ",
+                about_adv3_p: "Рекурсивная декомпозиция MIT RLM передает ИИ только отфильтрованные строки, решая проблему лимитов токенов и зависания.",
+                about_adv4_h: "🔗 Синергия базы знаний",
+                about_adv4_p: "Автоматическая генерация связей [[Concept]] строит визуальную граф-сеть ваших проектов для удобного ручного или автоматического анализа."
+            },
+            en: {
+                logo_title: "Memex-Wiki",
+                sidebar_version: "Version",
+                sidebar_github: "GitHub Repository",
+                nav_graph: "3D Graph",
+                nav_search: "Search",
+                nav_ingest: "Ingest",
+                nav_settings: "Settings",
+                nav_linter: "Linter",
+                nav_about: "About System",
+                
+                graph_title: "3D Visualization",
+                graph_desc: "Hold LMB and drag to rotate in 3D. RMB to pan. Scroll wheel to zoom.",
+                graph_legend_concept: "Concept",
+                graph_legend_summary: "Summary",
+                graph_legend_system: "System",
+                btn_refresh_graph: "🔄 Refresh Graph",
+                note_details_title: "Note Details",
+                note_type: "Type:",
+                note_updated: "Updated:",
+                note_tags: "Tags:",
+                note_relations: "Relations:",
+                note_content_h: "Content",
+                btn_close: "Close ✕",
+                
+                search_title: "Memory Search",
+                search_subtitle: "Precise semantic search across concepts using RLM filtering",
+                help_badge: "💡 Help",
+                search_help_tooltip: "Here you can ask any question about your projects. The RLM system will automatically filter out redundant document chunks, presenting only the core substance with precise source links.",
+                search_how_works_h: "How does RLM search work?",
+                search_how_works_p: "The system splits files into chunks of 3000 tokens and queries the chosen provider (Gemini or Ollama) in single-threaded mode. This prevents computer freeze and context overload.",
+                search_input_placeholder: "Enter your question...",
+                btn_find: "Find",
+                search_loading: "Querying chunks by LLM...",
+                search_result_title: "Synthesized memory response",
+                
+                ingest_title: "Ingest Documents",
+                ingest_subtitle: "Adding raw project files to the knowledge base",
+                ingest_help_tooltip: "Ingest converts raw project files (code, readmes, text) into linked concept pages. Modifying raw files in the projects folder is strictly forbidden.",
+                ingest_cot_h: "Two-step syntactic analysis:",
+                ingest_cot_p: "During import, the model first builds a Chain-of-Thought entity map to resolve synonyms, then carefully creates Markdown pages and makes an automatic Git commit.",
+                ingest_path_label: "Project File Path",
+                ingest_path_placeholder: "Example: Antigravity/09_Obsidian_Graph_Antigravity/requirements.txt",
+                btn_ingest: "Import",
+                ingest_path_desc: "Relative path from the root projects directory (configured via raw_folder_path setting).",
+                ingest_loading: "Analyzing entities by LLM...",
+                ingest_log_title: "Recent Ingestion Log",
+                ingest_log_empty: "Ingestion history is empty.",
+                ingest_scan_section: "Scan Projects Directory (Raw Scan)",
+                ingest_scan_desc: "Scans the connected working folder for new or modified project files that haven't been ingested into Obsidian.",
+                btn_scan_projects: "Scan Projects",
+                btn_ingest_all: "Import All Scanned",
+                ingest_scan_loading: "Analyzing files in the working directory...",
+                ingest_scan_empty: "All files are up to date. No changes found.",
+                ingest_new_files_h: "New Project Files",
+                ingest_modified_files_h: "Modified Files",
+                btn_file_import: "Import",
+                
+                settings_title: "System Settings",
+                settings_subtitle: "Configure LLM provider, folders and visuals",
+                settings_help_tooltip: "You can switch instantly between cloud Gemini API and local Ollama. Changes are saved directly to config.yaml.",
+                settings_interface_section: "Interface",
+                settings_lang_label: "Interface Language",
+                settings_theme_label: "Visual Theme",
+                settings_theme_dark: "Dark",
+                settings_theme_light: "Light",
+                settings_llm_section: "LLM Compute Engine",
+                settings_provider_label: "LLM Provider",
+                settings_gemini_model_label: "Gemini Model",
+                settings_gemini_key_label: "Gemini API Key",
+                settings_gemini_key_placeholder: "Leave empty if set as environment variable",
+                settings_ollama_model_label: "Ollama Model",
+                settings_ollama_select_loading: "Loading models...",
+                settings_ollama_model_placeholder: "Enter model name manually, e.g.: qwen2.5:3b",
+                ollama_downloader_title: "Download model from Ollama Library",
+                ollama_downloader_custom_opt: "Enter custom name...",
+                btn_download: "Download",
+                settings_ollama_url_label: "Ollama API URL",
+                settings_directories_section: "Manage Folders and Indexing",
+                settings_vault_path_label: "Obsidian Vault Path",
+                settings_raw_path_label: "Raw Projects Folder Path",
+                settings_exclude_label: "Exclude Patterns for Scanning",
+                settings_exclude_desc: "Files and folders that will be ignored during scans and indexing:",
+                settings_exclude_add_placeholder: "Example: dist or *.log",
+                btn_add: "Add",
+                btn_save_settings: "Save All Settings",
+                toast_saved: "Settings saved to config.yaml",
+                toast_save_err: "Error saving settings: ",
+                toast_load_err: "Error loading configuration: ",
+                
+                linter_title: "Knowledge Graph Linter",
+                linter_subtitle: "Auditing knowledge base integrity and relationships",
+                linter_help_tooltip: "The linter scans the entire wiki/ folder, validates YAML metadata correctness, finds broken wikilinks [[link]], and detects orphan pages.",
+                btn_run_linter: "Run Integrity Audit",
+                linter_loading: "Analyzing file structures and graph...",
+                linter_report_title: "Graph Audit Report",
+                linter_stat_checked: "Checked Files",
+                linter_stat_errors: "Errors",
+                linter_stat_warnings: "Warnings",
+                linter_raw_report: "Show Raw Report (Markdown)",
+                linter_report_empty: "Report is empty.",
+                linter_recommendation_label: "💡 Recommendation:",
+                linter_errors_header: "Critical Errors (require fix)",
+                linter_warnings_header: "Warnings",
+                linter_success_msg: "Integrity check passed! No errors or warnings found.",
+                
+                about_title: "About Memex-Wiki",
+                about_subtitle: "Architecture, principles and benefits of hybrid memory",
+                about_purpose_h: "Purpose of Hybrid Memory",
+                about_purpose_p: "The system is designed as a local digital Second Brain. It solves the fundamental issues of traditional dynamic RAG: dependence on internet connection, high costs of cloud queries, leakage of sensitive data, and context fragmentation under massive codebases.",
+                about_how_works_h: "How it works in simple terms",
+                about_step_process_h: "🔄 4-Step Process",
+                about_step1_title: "File Ingestion:",
+                about_step1_desc: "You place raw project files in the workspace folders.",
+                about_step2_title: "Knowledge Atomization:",
+                about_step2_desc: "AI reads files once and extracts core concepts.",
+                about_step3_title: "Graph Linking:",
+                about_step3_desc: "AI connects each concept with other relevant concepts using links.",
+                about_step4_title: "Semantic Search:",
+                about_step4_desc: "When queried, AI finds key nodes on the map and builds a precise answer.",
+                about_graph_concept_h: "🕸️ The Role of Knowledge Graph",
+                about_graph_concept_p: "Imagine a road map where towns represent topics or files in your projects (graph nodes), and roads represent relations between them. Instead of blind keyword searching, AI instantly follows these links from topic to topic. This allows it to hold the entire project picture, avoid hallucinations, and discover non-obvious relations.",
+                about_compilation_h: "1. Ingestion (Karpathy style)",
+                about_compilation_p: "<b>Knowledge Compilation:</b> data is precompiled when added. Files are compressed, key concepts extracted and permanently linked in Obsidian Markdown pages.",
+                about_computation_h: "2. Computation (MIT RLM style)",
+                about_computation_p: "<b>Context-as-Environment:</b> rather than stuffing raw documents into the prompt, the Root model runs a local Python script to dynamically search, filter, and poll chunks.",
+                about_principles_h: "Key Principles and Components",
+                about_storage_h: "Obsidian Storage (MD + YAML):",
+                about_storage_p: "Markdown-based note taking. Links [[Concept]] act as graph edges, while YAML frontmatter blocks store metadata for code parsing.",
+                about_git_h: "Memory Version Control (Git):",
+                about_git_p: "All changes are recorded in Git. You can inspect what facts the AI edited and roll back in case of mistakes.",
+                about_models_h: "Compute Freedom (Gemini / Ollama):",
+                about_models_p: "Run fully offline on open models via Ollama or switch to ultra-low cost Gemini API for massive processing tasks.",
+                about_security_h: "Security & Secret Redaction:",
+                about_security_p: "The backend automatically redacts passwords, API keys, and database strings during raw ingestion to protect your privacy.",
+                about_advantages_h: "Key Advantages",
+                about_adv1_h: "🔒 100% Local and Private",
+                about_adv1_p: "With Ollama, all data stays on your computer. Your project details are never sent to external servers.",
+                about_adv2_h: "🧠 Hallucination Resistant",
+                about_adv2_p: "Due to ingestion-time synthesis and precise regex searching, the model generates answers strictly grounded in actual facts.",
+                about_adv3_h: "⚡ Context Efficient",
+                about_adv3_p: "MIT RLM decomposition sends only relevant lines to the LLM, solving context window limits and reducing compute lag.",
+                about_adv4_h: "🔗 Knowledge Synergy",
+                about_adv4_p: "Automatic [[Concept]] cross-linking builds a visual knowledge web of all your projects for automated or manual discovery."
+            }
+        };
+
+        let currentLang = 'ru';
+        let currentExcludePatterns = [];
+
+        // Apply visual translations
+        function applyLanguage(lang) {
+            currentLang = lang;
+            document.querySelectorAll('[data-i18n]').forEach(el => {
+                const key = el.getAttribute('data-i18n');
+                if (translations[lang] && translations[lang][key]) {
+                    el.innerHTML = translations[lang][key];
+                }
+            });
+            
+            document.querySelectorAll('[data-i18n-placeholder]').forEach(el => {
+                const key = el.getAttribute('data-i18n-placeholder');
+                if (translations[lang] && translations[lang][key]) {
+                    el.placeholder = translations[lang][key];
+                }
+            });
+            
+            // Highlight button
+            document.querySelectorAll('#lang-toggle .toggle-group-btn').forEach(btn => {
+                if (btn.dataset.lang === lang) {
+                    btn.classList.add('active');
+                } else {
+                    btn.classList.remove('active');
+                }
+            });
+            
+            localStorage.setItem('memex_lang', lang);
+        }
+
+        function translateElementsOfContainer(container) {
+            container.querySelectorAll('[data-i18n]').forEach(el => {
+                const key = el.getAttribute('data-i18n');
+                if (translations[currentLang] && translations[currentLang][key]) {
+                    el.innerHTML = translations[currentLang][key];
+                }
+            });
+        }
+
+        // Tab switching logic
+        document.querySelectorAll('.nav-item').forEach(item => {
+            item.addEventListener('click', () => {
+                document.querySelectorAll('.nav-item').forEach(i => i.classList.remove('active'));
+                document.querySelectorAll('.page').forEach(p => p.classList.remove('active'));
+                
+                item.classList.add('active');
+                const pageId = `page-${item.dataset.page}`;
+                document.getElementById(pageId).classList.add('active');
+
+                if (item.dataset.page === 'graph') {
+                    loadGraph();
+                } else if (item.dataset.page === 'ingest') {
+                    loadIngestLogs();
+                }
+            });
+        });
+
+        // Theme Toggle
+        document.querySelectorAll('#theme-toggle .toggle-group-btn').forEach(btn => {
+            btn.addEventListener('click', () => {
+                document.querySelectorAll('#theme-toggle .toggle-group-btn').forEach(b => b.classList.remove('active'));
+                btn.classList.add('active');
+
+                const theme = btn.dataset.theme;
+                if (theme === 'light') {
+                    document.body.classList.add('light-theme');
+                    localStorage.setItem('memex_theme', 'light');
+                    if (graphInstance) {
+                        graphInstance.backgroundColor('#f4f4f5');
+                        graphInstance.linkColor(() => 'rgba(113, 113, 122, 0.3)');
+                    }
+                } else {
+                    document.body.classList.remove('light-theme');
+                    localStorage.setItem('memex_theme', 'dark');
+                    if (graphInstance) {
+                        graphInstance.backgroundColor('#09090b');
+                        graphInstance.linkColor(() => 'rgba(63, 63, 70, 0.4)');
+                    }
+                }
+            });
+        });
+
+        // Language Toggle Listener
+        document.querySelectorAll('#lang-toggle .toggle-group-btn').forEach(btn => {
+            btn.addEventListener('click', () => {
+                applyLanguage(btn.dataset.lang);
+            });
+        });
+
+        // Toggle LLM Provider
+        document.querySelectorAll('#provider-toggle .toggle-group-btn').forEach(btn => {
+            btn.addEventListener('click', () => {
+                document.querySelectorAll('#provider-toggle .toggle-group-btn').forEach(b => b.classList.remove('active'));
+                btn.classList.add('active');
+
+                if (btn.dataset.provider === 'gemini') {
+                    document.getElementById('settings-gemini-fields').style.display = 'block';
+                    document.getElementById('settings-ollama-fields').style.display = 'none';
+                } else {
+                    document.getElementById('settings-gemini-fields').style.display = 'none';
+                    document.getElementById('settings-ollama-fields').style.display = 'block';
+                    loadOllamaModels();
+                }
+            });
+        });
+
+        // Downloader custom model name toggle
+        document.getElementById('downloader-model-select').addEventListener('change', (e) => {
+            const wrapper = document.getElementById('downloader-custom-input-wrapper');
+            if (e.target.value === 'custom_input') {
+                wrapper.style.display = 'block';
+            } else {
+                wrapper.style.display = 'none';
+            }
+        });
+
+        // Ollama model select toggle
+        document.getElementById('settings-ollama-model-select').addEventListener('change', (e) => {
+            const wrapper = document.getElementById('settings-ollama-custom-model-wrapper');
+            if (e.target.value === 'custom_input' || e.target.value === '') {
+                wrapper.style.display = 'block';
+            } else {
+                wrapper.style.display = 'none';
+            }
+        });
+
+        // Toast
+        function showToast(message, isError = false) {
+            const toast = document.getElementById('toast');
+            const msg = document.getElementById('toast-message');
+            
+            toast.style.borderColor = isError ? 'var(--error)' : 'var(--border)';
+            msg.innerText = message;
+            toast.classList.add('show');
+
+            setTimeout(() => {
+                toast.classList.remove('show');
+            }, 3000);
+        }
+
+        // --- Exclude list manager ---
+        function renderExcludePatterns() {
+            const container = document.getElementById('exclude-list-container');
+            container.innerHTML = '';
+            
+            currentExcludePatterns.forEach((pat, index) => {
+                const badge = document.createElement('div');
+                badge.className = 'exclude-badge';
+                badge.innerHTML = `
+                    <span>${pat}</span>
+                    <span class="remove-btn" onclick="removeExcludePattern(${index})">✕</span>
+                `;
+                container.appendChild(badge);
+            });
+        }
+
+        function addExcludePattern() {
+            const input = document.getElementById('new-exclude-input');
+            const pat = input.value.trim();
+            if (pat && !currentExcludePatterns.includes(pat)) {
+                currentExcludePatterns.push(pat);
+                renderExcludePatterns();
+                input.value = '';
+            }
+        }
+
+        function removeExcludePattern(index) {
+            currentExcludePatterns.splice(index, 1);
+            renderExcludePatterns();
+        }
+
+        // --- Config API ---
+        async function loadConfig() {
+            try {
+                const response = await fetch('/api/config');
+                const config = await response.json();
+                
+                const llm = config.llm || {};
+                const backend = llm.backend || 'gemini';
+                
+                document.querySelectorAll('#provider-toggle .toggle-group-btn').forEach(b => {
+                    if (b.dataset.provider === backend) {
+                        b.click();
+                    }
+                });
+
+                document.getElementById('settings-gemini-model').value = llm.model || 'gemini-2.5-flash';
+                document.getElementById('settings-gemini-key').value = llm.gemini_api_key || '';
+                
+                // Paths
+                document.getElementById('settings-vault-path').value = config.obsidian_vault_path || '';
+                document.getElementById('settings-raw-path').value = config.raw_folder_path || '';
+                
+                // Exclude patterns
+                currentExcludePatterns = config.exclude_patterns || [];
+                renderExcludePatterns();
+                
+                document.getElementById('settings-ollama-url').value = llm.ollama_url || 'http://localhost:11434/api/generate';
+                
+                // Temp model storage (will be set after model list loads)
+                window.configuredOllamaModel = llm.model || '';
+                
+            } catch (e) {
+                showToast((translations[currentLang].toast_load_err || 'Ошибка загрузки конфигурации: ') + e.message, true);
+            }
+        }
+
+        async function saveConfig() {
+            const activeProviderBtn = document.querySelector('#provider-toggle .toggle-group-btn.active');
+            const backend = activeProviderBtn.dataset.provider;
+            
+            const payload = {
+                backend: backend,
+                obsidian_vault_path: document.getElementById('settings-vault-path').value.trim(),
+                raw_folder_path: document.getElementById('settings-raw-path').value.trim(),
+                exclude_patterns: currentExcludePatterns
+            };
+
+            if (backend === 'gemini') {
+                payload.model = document.getElementById('settings-gemini-model').value;
+                payload.gemini_api_key = document.getElementById('settings-gemini-key').value;
+            } else {
+                const selectEl = document.getElementById('settings-ollama-model-select');
+                if (selectEl.value === 'custom_input' || selectEl.value === '') {
+                    payload.model = document.getElementById('settings-ollama-model').value.trim();
+                } else {
+                    payload.model = selectEl.value;
+                }
+                payload.ollama_url = document.getElementById('settings-ollama-url').value.trim();
+            }
+
+            try {
+                const response = await fetch('/api/config', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify(payload)
+                });
+                const result = await response.json();
+                if (result.success) {
+                    showToast(translations[currentLang].toast_saved || 'Настройки сохранены в config.yaml');
+                    loadConfig();
+                } else {
+                    showToast((translations[currentLang].toast_save_err || 'Ошибка: ') + result.error, true);
+                }
+            } catch (e) {
+                showToast((translations[currentLang].toast_save_err || 'Ошибка: ') + e.message, true);
+            }
+        }
+
+        // --- Load local Ollama Models ---
+        async function loadOllamaModels() {
+            const selectEl = document.getElementById('settings-ollama-model-select');
+            selectEl.innerHTML = `<option value="">${translations[currentLang].settings_ollama_select_loading || 'Загрузка моделей...'}</option>`;
+            
+            try {
+                const response = await fetch('/api/ollama_models');
+                const data = await response.json();
+                
+                selectEl.innerHTML = '';
+                
+                if (data.models && data.models.length > 0) {
+                    data.models.forEach(model => {
+                        const opt = document.createElement('option');
+                        opt.value = model;
+                        opt.innerText = model;
+                        selectEl.appendChild(opt);
+                    });
+                    
+                    // Add manual option
+                    const manualOpt = document.createElement('option');
+                    manualOpt.value = 'custom_input';
+                    manualOpt.innerText = translations[currentLang].ollama_downloader_custom_opt || 'Указать имя вручную...';
+                    selectEl.appendChild(manualOpt);
+                    
+                    // Match previously configured
+                    if (window.configuredOllamaModel && data.models.includes(window.configuredOllamaModel)) {
+                        selectEl.value = window.configuredOllamaModel;
+                        document.getElementById('settings-ollama-custom-model-wrapper').style.display = 'none';
+                    } else if (window.configuredOllamaModel) {
+                        selectEl.value = 'custom_input';
+                        document.getElementById('settings-ollama-model').value = window.configuredOllamaModel;
+                        document.getElementById('settings-ollama-custom-model-wrapper').style.display = 'block';
+                    }
+                } else {
+                    // Empty list or failed connection
+                    const opt = document.createElement('option');
+                    opt.value = 'custom_input';
+                    opt.innerText = translations[currentLang].ollama_downloader_custom_opt || 'Указать имя вручную...';
+                    selectEl.appendChild(opt);
+                    selectEl.value = 'custom_input';
+                    document.getElementById('settings-ollama-custom-model-wrapper').style.display = 'block';
+                    if (window.configuredOllamaModel) {
+                        document.getElementById('settings-ollama-model').value = window.configuredOllamaModel;
+                    }
+                }
+            } catch (e) {
+                console.error("Error loading Ollama models", e);
+                selectEl.innerHTML = `<option value="custom_input">${translations[currentLang].ollama_downloader_custom_opt || 'Указать имя вручную...'}</option>`;
+                selectEl.value = 'custom_input';
+                document.getElementById('settings-ollama-custom-model-wrapper').style.display = 'block';
+            }
+        }
+
+        // --- Ollama Downloader ---
+        let pullInterval = null;
+        async function pullOllamaModel() {
+            let modelName = document.getElementById('downloader-model-select').value;
+            if (modelName === 'custom_input') {
+                modelName = document.getElementById('downloader-custom-input').value.trim();
+            }
+            
+            if (!modelName) {
+                showToast(currentLang === 'ru' ? 'Пожалуйста, введите имя модели' : 'Please enter model name', true);
+                return;
+            }
+            
+            const progressContainer = document.getElementById('pull-progress-container');
+            const statusText = document.getElementById('pull-status-text');
+            const pctText = document.getElementById('pull-percentage-text');
+            const progressBar = document.getElementById('pull-progress-bar');
+            
+            progressContainer.style.display = 'block';
+            statusText.innerText = currentLang === 'ru' ? 'Запуск загрузки...' : 'Starting download...';
+            pctText.innerText = '0%';
+            progressBar.style.width = '0%';
+            
+            try {
+                const response = await fetch('/api/ollama_pull', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ name: modelName })
+                });
+                const result = await response.json();
+                
+                if (result.success) {
+                    // Start polling
+                    clearInterval(pullInterval);
+                    pullInterval = setInterval(checkPullStatus, 1500);
+                } else {
+                    showToast(result.error || 'Failed to start pull', true);
+                }
+            } catch (e) {
+                showToast(e.message, true);
+            }
+        }
+
+        async function checkPullStatus() {
+            const statusText = document.getElementById('pull-status-text');
+            const pctText = document.getElementById('pull-percentage-text');
+            const progressBar = document.getElementById('pull-progress-bar');
+            const progressContainer = document.getElementById('pull-progress-container');
+            
+            try {
+                const response = await fetch('/api/ollama_pull_status');
+                const data = await response.json();
+                
+                if (data.status === 'downloading') {
+                    statusText.innerText = (currentLang === 'ru' ? 'Скачивание: ' : 'Downloading: ') + data.model;
+                    pctText.innerText = data.progress + '%';
+                    progressBar.style.width = data.progress + '%';
+                } else if (data.status === 'success') {
+                    statusText.innerText = (currentLang === 'ru' ? 'Успешно установлено! ' : 'Successfully installed! ') + data.model;
+                    pctText.innerText = '100%';
+                    progressBar.style.width = '100%';
+                    clearInterval(pullInterval);
+                    showToast(currentLang === 'ru' ? 'Модель успешно скачана!' : 'Model downloaded successfully!');
+                    loadOllamaModels();
+                    setTimeout(() => {
+                        progressContainer.style.display = 'none';
+                    }, 4000);
+                } else if (data.status === 'error') {
+                    statusText.innerText = (currentLang === 'ru' ? 'Ошибка: ' : 'Error: ') + data.error;
+                    clearInterval(pullInterval);
+                    showToast((currentLang === 'ru' ? 'Ошибка загрузки: ' : 'Download error: ') + data.error, true);
+                } else {
+                    statusText.innerText = data.status;
+                }
+            } catch (e) {
+                console.error("Error checking pull status", e);
+            }
+        }
+
+        // --- Scan Workspace raw directory ---
+        let scannedNewFiles = [];
+        let scannedModifiedFiles = [];
+        
+        async function scanRawFiles() {
+            const loader = document.getElementById('scan-loader');
+            const btn = document.getElementById('scan-raw-btn');
+            const resultsWrapper = document.getElementById('scan-results-wrapper');
+            const ingestAllBtn = document.getElementById('ingest-all-btn');
+            
+            loader.style.display = 'flex';
+            resultsWrapper.style.display = 'none';
+            ingestAllBtn.style.display = 'none';
+            btn.disabled = true;
+            
+            try {
+                const response = await fetch('/api/scan_raw');
+                const data = await response.json();
+                
+                scannedNewFiles = data.new_files || [];
+                scannedModifiedFiles = data.modified_files || [];
+                
+                loader.style.display = 'none';
+                resultsWrapper.style.display = 'block';
+                
+                const emptyMsg = document.getElementById('scan-results-empty');
+                const newSec = document.getElementById('new-files-section');
+                const modSec = document.getElementById('modified-files-section');
+                const newList = document.getElementById('new-files-list');
+                const modList = document.getElementById('modified-files-list');
+                
+                newList.innerHTML = '';
+                modList.innerHTML = '';
+                
+                if (scannedNewFiles.length === 0 && scannedModifiedFiles.length === 0) {
+                    emptyMsg.style.display = 'block';
+                    newSec.style.display = 'none';
+                    modSec.style.display = 'none';
+                    ingestAllBtn.style.display = 'none';
+                } else {
+                    emptyMsg.style.display = 'none';
+                    ingestAllBtn.style.display = 'block';
+                    
+                    if (scannedNewFiles.length > 0) {
+                        newSec.style.display = 'block';
+                        scannedNewFiles.forEach(file => {
+                            const div = createScanItemElement(file);
+                            newList.appendChild(div);
+                        });
+                    } else {
+                        newSec.style.display = 'none';
+                    }
+                    
+                    if (scannedModifiedFiles.length > 0) {
+                        modSec.style.display = 'block';
+                        scannedModifiedFiles.forEach(file => {
+                            const div = createScanItemElement(file);
+                            modList.appendChild(div);
+                        });
+                    } else {
+                        modSec.style.display = 'none';
+                    }
+                }
+            } catch (e) {
+                showToast(e.message, true);
+                loader.style.display = 'none';
+            } finally {
+                btn.disabled = false;
+            }
+        }
+        
+        function createScanItemElement(file) {
+            const div = document.createElement('div');
+            div.className = 'scan-file-item';
+            div.innerHTML = `
+                <div style="display: flex; flex-direction: column; gap: 2px;">
+                    <span style="font-weight: 500; word-break: break-all;">${file.rel_path}</span>
+                    <span style="font-size: 10px; color: var(--text-muted);">${(file.size / 1024).toFixed(1)} KB</span>
+                </div>
+                <button class="btn btn-secondary" style="padding: 6px 12px; font-size: 11px;" onclick="ingestScannedFile('${file.rel_path}', this)" data-i18n="btn_file_import">Импорт</button>
+            `;
+            return div;
+        }
+        
+        async function ingestScannedFile(filepath, buttonEl) {
+            if (buttonEl) {
+                buttonEl.disabled = true;
+                buttonEl.innerText = currentLang === 'ru' ? 'Идет...' : 'Ingesting...';
+            }
+            
+            try {
+                const response = await fetch('/api/ingest', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ filename: filepath })
+                });
+                const result = await response.json();
+                if (result.success) {
+                    showToast(currentLang === 'ru' ? `Успешно импортирован: ${filepath}` : `Successfully ingested: ${filepath}`);
+                    if (buttonEl) {
+                        buttonEl.innerText = currentLang === 'ru' ? 'Готово ✓' : 'Done ✓';
+                        buttonEl.style.color = 'var(--success)';
+                        buttonEl.style.borderColor = 'var(--success)';
+                    }
+                    loadIngestLogs();
+                } else {
+                    showToast(result.error, true);
+                    if (buttonEl) {
+                        buttonEl.disabled = false;
+                        buttonEl.innerText = translations[currentLang].btn_file_import || 'Импорт';
+                    }
+                }
+            } catch (e) {
+                showToast(e.message, true);
+                if (buttonEl) {
+                    buttonEl.disabled = false;
+                    buttonEl.innerText = translations[currentLang].btn_file_import || 'Импорт';
+                }
+            }
+        }
+        
+        async function ingestAllScanned() {
+            const allFiles = [...scannedNewFiles, ...scannedModifiedFiles];
+            if (allFiles.length === 0) return;
+            
+            const btn = document.getElementById('ingest-all-btn');
+            const scanBtn = document.getElementById('scan-raw-btn');
+            btn.disabled = true;
+            scanBtn.disabled = true;
+            
+            showToast(currentLang === 'ru' ? `Начат импорт ${allFiles.length} файлов...` : `Starting ingest of ${allFiles.length} files...`);
+            
+            for (let i = 0; i < allFiles.length; i++) {
+                const file = allFiles[i];
+                btn.innerText = (currentLang === 'ru' ? 'Импорт ' : 'Importing ') + (i + 1) + '/' + allFiles.length;
+                
+                try {
+                    await fetch('/api/ingest', {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify({ filename: file.rel_path })
+                    });
+                } catch (e) {
+                    console.error("Batch ingest error for file " + file.rel_path, e);
+                }
+            }
+            
+            showToast(currentLang === 'ru' ? 'Пакетный импорт завершен!' : 'Batch ingestion completed!');
+            btn.innerText = translations[currentLang].btn_ingest_all || 'Импортировать все найденные';
+            btn.disabled = false;
+            scanBtn.disabled = false;
+            
+            scanRawFiles();
+            loadIngestLogs();
+        }
+
+        // --- Ingest log ---
+        async function runIngest() {
+            const filepath = document.getElementById('ingest-path').value.trim();
+            if (!filepath) {
+                showToast(currentLang === 'ru' ? 'Пожалуйста, введите путь к файлу' : 'Please enter file path', true);
+                return;
+            }
+
+            const loader = document.getElementById('ingest-loader');
+            const btn = document.getElementById('ingest-btn');
+            
+            loader.style.display = 'flex';
+            btn.disabled = true;
+
+            try {
+                const response = await fetch('/api/ingest', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ filename: filepath })
+                });
+                const result = await response.json();
+                if (result.success) {
+                    showToast(currentLang === 'ru' ? 'Файл успешно импортирован' : 'File imported successfully');
+                    document.getElementById('ingest-path').value = '';
+                    loadIngestLogs();
+                } else {
+                    showToast((currentLang === 'ru' ? 'Ошибка импорта: ' : 'Ingest error: ') + result.error, true);
+                }
+            } catch (e) {
+                showToast(e.message, true);
+            } finally {
+                loader.style.display = 'none';
+                btn.disabled = false;
+            }
+        }
+
+        async function loadIngestLogs() {
+            try {
+                const response = await fetch('/api/logs');
+                const logs = await response.json();
+                const container = document.getElementById('ingest-log-list');
+                container.innerHTML = '';
+                
+                if (logs.length === 0) {
+                    container.innerHTML = `<div style="color: var(--text-muted); font-size: 13px;">${translations[currentLang].ingest_log_empty || 'История импортов пуста.'}</div>`;
+                    return;
+                }
+
+                logs.forEach(log => {
+                    const item = document.createElement('div');
+                    item.className = 'log-item';
+                    item.innerHTML = `
+                        <div class="log-date">${log.date}</div>
+                        <div>${log.message}</div>
+                    `;
+                    container.appendChild(item);
+                });
+            } catch (e) {
+                console.error('Ошибка загрузки логов:', e);
+            }
+        }
+
+        // --- Search API ---
+        async function runQuery() {
+            const query = document.getElementById('query-input').value.trim();
+            if (!query) {
+                showToast(currentLang === 'ru' ? 'Пожалуйста, введите ваш вопрос' : 'Please enter your question', true);
+                return;
+            }
+
+            const loader = document.getElementById('query-loader');
+            const resultPanel = document.getElementById('query-result-panel');
+            const resultText = document.getElementById('query-result-text');
+            const btn = document.getElementById('query-btn');
+
+            loader.style.display = 'flex';
+            resultPanel.style.display = 'none';
+            btn.disabled = true;
+
+            try {
+                const response = await fetch('/api/query', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ query: query })
+                });
+                const result = await response.json();
+                resultText.innerText = result.answer || (currentLang === 'ru' ? 'Ответ не найден.' : 'Answer not found.');
+                resultPanel.style.display = 'flex';
+            } catch (e) {
+                showToast((currentLang === 'ru' ? 'Ошибка при поиске: ' : 'Search error: ') + e.message, true);
+            } finally {
+                loader.style.display = 'none';
+                btn.disabled = false;
+            }
+        }
+
+        // --- Linter report parser and renderer ---
+        function parseLinterReport(reportText) {
+            const lines = reportText.split('\n');
+            const errors = [];
+            const warnings = [];
+            let totalChecked = 0;
+            
+            const totalMatch = reportText.match(/Всего проверено файлов:\s*(\d+)/i) || reportText.match(/Total checked files:\s*(\d+)/i);
+            if (totalMatch) {
+                totalChecked = parseInt(totalMatch[1]);
+            }
+            
+            lines.forEach(line => {
+                const trimmed = line.trim();
+                if (trimmed.startsWith('- ')) {
+                    const message = trimmed.substring(2);
+                    if (message.includes('не может быть прочитан') || message.includes('ошибки') || message.includes('не содержит обязательного поля') || message.includes('Битая ссылка') || message.includes('broken') || message.includes('error')) {
+                        errors.push({
+                            text: message,
+                            recommendation: getRecommendation(message)
+                        });
+                    } else {
+                        warnings.push({
+                            text: message,
+                            recommendation: getRecommendation(message)
+                        });
+                    }
+                }
+            });
+            
+            return { totalChecked, errors, warnings };
+        }
+
+        function getRecommendation(msg) {
+            if (msg.includes('не содержит обязательного поля') || msg.includes('does not contain required field') || msg.includes('обязательного поля')) {
+                return currentLang === 'ru' 
+                    ? 'Добавьте `id: <имя_концепта>` в YAML-блок (frontmatter) в начале этого файла Markdown.' 
+                    : 'Add `id: <concept_name>` to the YAML frontmatter block at the top of this Markdown file.';
+            }
+            if (msg.includes('Битая ссылка') || msg.includes('Broken link') || msg.includes('указывает на')) {
+                return currentLang === 'ru' 
+                    ? 'Убедитесь, что целевой файл существует в папке wiki/, или исправьте опечатку внутри двойных скобок [[ссылка]].' 
+                    : 'Ensure the target file exists inside the wiki/ folder, or fix the typo within the double brackets [[link]].';
+            }
+            if (msg.includes('не имеет поля \'type\'') || msg.includes('does not have \'type\' field') || msg.includes('type')) {
+                return currentLang === 'ru' 
+                    ? 'Добавьте `type: concept` (или `type: summary`, `type: system`) во frontmatter для классификации в графе.' 
+                    : 'Add `type: concept` (or `type: summary`, `type: system`) in the frontmatter to classify this node in the graph.';
+            }
+            if (msg.includes('Страница-сирота') || msg.includes('Orphan page') || msg.includes('сирота')) {
+                return currentLang === 'ru' 
+                    ? 'Добавьте вики-ссылку на этот файл из других концептов (например, из [[index]]), чтобы связать его с графом.' 
+                    : 'Add a wikilink to this file from other concepts (e.g. from [[index]]) to link it with the main graph.';
+            }
+            if (msg.includes('неверный формат даты') || msg.includes('invalid date format') || msg.includes('формат даты')) {
+                return currentLang === 'ru' 
+                    ? 'Укажите дату последнего изменения в стандарте ISO: ГГГГ-ММ-ДД (например, last_updated: 2026-06-25).' 
+                    : 'Provide the last edit date matching ISO format: YYYY-MM-DD (e.g. last_updated: 2026-06-25).';
+            }
+            if (msg.includes('устаревание') || msg.includes('obsolescence') || msg.includes('устарела') || msg.includes('устаревание')) {
+                return currentLang === 'ru' 
+                    ? 'Перепроверьте информацию: выжимка новее основного концепта. Рекомендуется перенести новые факты в концепт.' 
+                    : 'Compare details: the summary has a newer date than the core concept. Recommended to sync new facts to the core concept file.';
+            }
+            return currentLang === 'ru' ? 'Перепроверьте указанный файл на соответствие стандартам Obsidian Vault.' : 'Review this file details for conformity with Obsidian Vault standards.';
+        }
+
+        async function runLinter() {
+            const loader = document.getElementById('linter-loader');
+            const resultPanel = document.getElementById('linter-result-panel');
+            const resultText = document.getElementById('linter-result-text');
+            
+            loader.style.display = 'flex';
+            resultPanel.style.display = 'none';
+
+            try {
+                const response = await fetch('/api/lint');
+                const result = await response.json();
+                resultText.innerText = result.report || 'Отчет пуст.';
+                
+                renderStructuredLinter(result.report || '');
+                resultPanel.style.display = 'flex';
+            } catch (e) {
+                showToast((currentLang === 'ru' ? 'Ошибка при запуске линтера: ' : 'Linter error: ') + e.message, true);
+            } finally {
+                loader.style.display = 'none';
+            }
+        }
+
+        function renderStructuredLinter(reportText) {
+            const parsed = parseLinterReport(reportText);
+            
+            document.getElementById('lint-stat-checked').innerText = parsed.totalChecked;
+            document.getElementById('lint-stat-errors').innerText = parsed.errors.length;
+            document.getElementById('lint-stat-warnings').innerText = parsed.warnings.length;
+            
+            const container = document.getElementById('linter-structured-content');
+            container.innerHTML = '';
+            
+            if (parsed.errors.length === 0 && parsed.warnings.length === 0) {
+                container.innerHTML = `
+                    <div style="padding: 24px; text-align: center; border: 1px solid var(--success); border-radius: 8px; background: rgba(16, 185, 129, 0.05); color: var(--success); font-weight: 500;">
+                        ✅ <span data-i18n="linter_success_msg">Проверка целостности успешно пройдена! Ошибок и замечаний не обнаружено.</span>
+                    </div>
+                `;
+                translateElementsOfContainer(container);
+                return;
+            }
+            
+            if (parsed.errors.length > 0) {
+                const errorSec = document.createElement('div');
+                errorSec.innerHTML = `
+                    <h4 style="font-size: 13.5px; font-weight: 600; color: var(--error); margin-bottom: 12px; text-transform: uppercase; letter-spacing: 0.5px;" data-i18n="linter_errors_header">Критические ошибки (требуют исправления)</h4>
+                    <div id="linter-errors-list" style="display: flex; flex-direction: column; gap: 10px;"></div>
+                `;
+                container.appendChild(errorSec);
+                
+                const errorsList = errorSec.querySelector('#linter-errors-list');
+                parsed.errors.forEach(err => {
+                    const item = document.createElement('div');
+                    item.style.cssText = 'border: 1px solid var(--border); border-left: 4px solid var(--error); border-radius: 8px; padding: 16px; background: var(--bg); font-size: 13px; line-height: 1.5;';
+                    item.innerHTML = `
+                        <div style="font-weight: 600; margin-bottom: 6px;">❌ ${err.text}</div>
+                        <div style="font-size: 12px; color: var(--text-muted); background: var(--panel-bg); border: 1px solid var(--border); border-radius: 6px; padding: 10px; margin-top: 8px;">
+                            <b style="color: var(--text); display: block; margin-bottom: 4px;" data-i18n="linter_recommendation_label">💡 Рекомендация:</b>
+                            <span>${err.recommendation}</span>
+                        </div>
+                    `;
+                    errorsList.appendChild(item);
+                });
+            }
+            
+            if (parsed.warnings.length > 0) {
+                const warningSec = document.createElement('div');
+                warningSec.innerHTML = `
+                    <h4 style="font-size: 13.5px; font-weight: 600; color: var(--accent); margin-top: 20px; margin-bottom: 12px; text-transform: uppercase; letter-spacing: 0.5px;" data-i18n="linter_warnings_header">Предупреждения</h4>
+                    <div id="linter-warnings-list" style="display: flex; flex-direction: column; gap: 10px;"></div>
+                `;
+                container.appendChild(warningSec);
+                
+                const warningsList = warningSec.querySelector('#linter-warnings-list');
+                parsed.warnings.forEach(warn => {
+                    const item = document.createElement('div');
+                    item.style.cssText = 'border: 1px solid var(--border); border-left: 4px solid var(--accent); border-radius: 8px; padding: 16px; background: var(--bg); font-size: 13px; line-height: 1.5;';
+                    item.innerHTML = `
+                        <div style="font-weight: 600; margin-bottom: 6px;">⚠️ ${warn.text}</div>
+                        <div style="font-size: 12px; color: var(--text-muted); background: var(--panel-bg); border: 1px solid var(--border); border-radius: 6px; padding: 10px; margin-top: 8px;">
+                            <b style="color: var(--text); display: block; margin-bottom: 4px;" data-i18n="linter_recommendation_label">💡 Рекомендация:</b>
+                            <span>${warn.recommendation}</span>
+                        </div>
+                    `;
+                    warningsList.appendChild(item);
+                });
+            }
+            
+            translateElementsOfContainer(container);
+        }
+
+        // --- 3D Graph Logic (3d-force-graph) ---
+        let graphInstance = null;
+        let hoveredNodeId = null;
+        let angle = 0;
+        let isUserInteracting = false;
+        let interactionTimeout = null;
+        let isAnimationStarted = false;
+
+        function getNodeColor(type) {
+            if (type === 'system') return '#d946ef';  // neon fuchsia
+            if (type === 'summary') return '#71717a'; // gray
+            return '#6366f1';                        // electric indigo
+        }
+
+        function startNodeAnimation() {
+            if (isAnimationStarted) return;
+            isAnimationStarted = true;
+
+            function tick() {
+                try {
+                    requestAnimationFrame(tick);
+                    if (graphInstance) {
+                        const camera = graphInstance.camera();
+                        const scene = graphInstance.scene();
+                        
+                        if (camera && scene) {
+                            const data = graphInstance.graphData();
+                            if (data && data.nodes) {
+                                data.nodes.forEach(node => {
+                                    if (node.__threeObj) {
+                                        node.__threeObj.rotation.y += 0.008;
+                                        node.__threeObj.rotation.x += 0.004;
+                                        
+                                        const isHovered = (node.id === hoveredNodeId);
+                                        const targetScale = isHovered ? 1.4 : 1.0;
+                                        const targetEmissive = isHovered ? 0.9 : 0.2;
+                                        
+                                        const currentScale = node.__threeObj.scale.x;
+                                        const nextScale = currentScale + (targetScale - currentScale) * 0.15;
+                                        node.__threeObj.scale.set(nextScale, nextScale, nextScale);
+                                        
+                                        if (node.__threeObj.material) {
+                                            const currentEmissive = node.__threeObj.material.emissiveIntensity;
+                                            node.__threeObj.material.emissiveIntensity = currentEmissive + (targetEmissive - currentEmissive) * 0.15;
+                                        }
+                                    }
+                                });
+                            }
+
+                            if (!isUserInteracting) {
+                                angle += 0.0012;
+                                const distance = 320;
+                                camera.position.x = distance * Math.sin(angle);
+                                camera.position.y = 60 * Math.sin(angle * 0.4);
+                                camera.position.z = distance * Math.cos(angle);
+                            } else {
+                                angle = Math.atan2(camera.position.x, camera.position.z);
+                            }
+                        }
+                    }
+                } catch (err) {
+                    console.error("Ошибка в цикле анимации графа:", err);
+                }
+            }
+            tick();
+        }
+
+        async function loadGraph() {
+            const canvas = document.getElementById('3d-graph-canvas');
+            canvas.innerHTML = `<div style="color: var(--text-muted); padding: 40px; font-size: 13px;">${currentLang === 'ru' ? 'Загрузка 3D графа знаний...' : 'Loading 3D knowledge graph...'}</div>`;
+            
+            try {
+                const response = await fetch('/api/graph');
+                const data = await response.json();
+                
+                if (data.nodes.length === 0) {
+                    canvas.innerHTML = `<div style="color: var(--text-muted); padding: 40px; font-size: 13px;">${currentLang === 'ru' ? 'База знаний пуста.' : 'Knowledge base is empty.'}</div>`;
+                    return;
+                }
+
+                const myData = {
+                    nodes: data.nodes.map(n => ({ id: n.id, type: n.type })),
+                    links: data.edges.map(e => ({ source: e.from, target: e.to }))
+                };
+
+                canvas.innerHTML = '';
+
+                const isLightTheme = document.body.classList.contains('light-theme');
+                graphInstance = ForceGraph3D()(canvas)
+                    .graphData(myData)
+                    .backgroundColor(isLightTheme ? '#f4f4f5' : '#09090b')
+                    .nodeLabel(node => `
+                        <div style="background: var(--overlay-bg); border: 1px solid var(--border); border-radius: 8px; padding: 8px 12px; color: var(--text); font-family: Inter, sans-serif; font-size: 12px; backdrop-filter: blur(12px); box-shadow: 0 10px 25px rgba(0,0,0,0.15);">
+                            <b style="color: var(--text);">${node.id}</b>
+                            <div style="color: var(--text-muted); font-size: 10px; margin-top: 4px; text-transform: uppercase; letter-spacing: 0.5px;">${currentLang === 'ru' ? 'Тип: ' : 'Type: '}${node.type}</div>
+                        </div>
+                    `)
+                    .nodeThreeObject(node => {
+                        const type = node.type || 'concept';
+                        let size = 5.5;
+                        
+                        if (type === 'system') {
+                            size = 7.0;
+                        } else if (type === 'summary') {
+                            size = 4.5;
+                        }
+                        
+                        const colorHex = getNodeColor(type);
+                        const geometry = new THREE.IcosahedronGeometry(size, 2);
+                        const material = new THREE.MeshStandardMaterial({
+                            color: new THREE.Color(colorHex),
+                            metalness: 0.9,
+                            roughness: 0.15,
+                            emissive: new THREE.Color(colorHex),
+                            emissiveIntensity: 0.2
+                        });
+                        
+                        return new THREE.Mesh(geometry, material);
+                    })
+                    .linkWidth(0.8)
+                    .linkResolution(6)
+                    .linkColor(() => isLightTheme ? 'rgba(113, 113, 122, 0.3)' : 'rgba(63, 63, 70, 0.4)')
+                    .linkDirectionalParticles(2)
+                    .linkDirectionalParticleSpeed(0.006)
+                    .linkDirectionalParticleWidth(2.2)
+                    .linkDirectionalParticleColor(() => '#a78bfa')
+                    .showNavInfo(false)
+                    .onNodeClick(node => {
+                        showNodeDetails(node.id);
+                    })
+                    .onNodeHover(node => {
+                        hoveredNodeId = node ? node.id : null;
+                    });
+
+                // Lighting
+                const scene = graphInstance.scene();
+                const lightsToRemove = [];
+                scene.traverse(obj => {
+                    if (obj.isLight) {
+                        lightsToRemove.push(obj);
+                    }
+                });
+                lightsToRemove.forEach(light => scene.remove(light));
+                
+                const ambientLight = new THREE.AmbientLight(0x0a0a0f, 1.5);
+                scene.add(ambientLight);
+                
+                const keyLight = new THREE.DirectionalLight(0xffffff, 4.0);
+                keyLight.position.set(200, 300, 150);
+                scene.add(keyLight);
+                
+                const neonFuchsiaLight = new THREE.DirectionalLight(0xd946ef, 3.5);
+                neonFuchsiaLight.position.set(-200, -250, -150);
+                scene.add(neonFuchsiaLight);
+                
+                const neonCyanLight = new THREE.DirectionalLight(0x06b6d4, 3.0);
+                neonCyanLight.position.set(150, 200, -200);
+                scene.add(neonCyanLight);
+                
+                const warmAmberLight = new THREE.DirectionalLight(0xf59e0b, 2.0);
+                warmAmberLight.position.set(-150, -200, 150);
+                scene.add(warmAmberLight);
+
+                const canvasContainer = document.getElementById('3d-graph-canvas');
+                
+                canvasContainer.onmousedown = () => {
+                    isUserInteracting = true;
+                    clearTimeout(interactionTimeout);
+                };
+                
+                canvasContainer.onmouseup = () => {
+                    clearTimeout(interactionTimeout);
+                    interactionTimeout = setTimeout(() => {
+                        isUserInteracting = false;
+                    }, 5000);
+                };
+                
+                canvasContainer.onwheel = () => {
+                    isUserInteracting = true;
+                    clearTimeout(interactionTimeout);
+                    interactionTimeout = setTimeout(() => {
+                        isUserInteracting = false;
+                    }, 5000);
+                };
+
+                startNodeAnimation();
+
+            } catch (e) {
+                canvas.innerHTML = '<div style="color: var(--error); padding: 40px; font-size: 13px;">Ошибка WebGL/3D: ' + e.message + '</div>';
+            }
+        }
+
+        async function showNodeDetails(nodeId) {
+            try {
+                const response = await fetch(`/api/note?id=${nodeId}`);
+                const note = await response.json();
+                
+                if (note.success) {
+                    document.getElementById('detail-title').innerText = note.id;
+                    document.getElementById('detail-type').innerText = note.type || 'unknown';
+                    document.getElementById('detail-date').innerText = note.last_updated || '-';
+                    document.getElementById('detail-tags').innerText = note.tags ? note.tags.join(', ') : '-';
+                    document.getElementById('detail-relations').innerText = note.relations || '-';
+                    document.getElementById('detail-body').innerText = note.body || '';
+                    
+                    document.getElementById('details-panel').classList.add('open');
+                } else {
+                    showToast(currentLang === 'ru' ? 'Не удалось загрузить данные заметки' : 'Failed to load note details', true);
+                }
+            } catch (e) {
+                showToast(currentLang === 'ru' ? 'Ошибка соединения с сервером' : 'Server connection error', true);
+            }
+        }
+
+        function closeDetails() {
+            document.getElementById('details-panel').classList.remove('open');
+        }
+
+        // Initialize theme and language on load
+        window.addEventListener('load', () => {
+            const savedLang = localStorage.getItem('memex_lang') || 'ru';
+            applyLanguage(savedLang);
+            
+            const savedTheme = localStorage.getItem('memex_theme') || 'dark';
+            if (savedTheme === 'light') {
+                document.body.classList.add('light-theme');
+                document.querySelectorAll('#theme-toggle .toggle-group-btn').forEach(btn => {
+                    if (btn.dataset.theme === 'light') btn.classList.add('active');
+                    else btn.classList.remove('active');
+                });
+            } else {
+                document.body.classList.remove('light-theme');
+                document.querySelectorAll('#theme-toggle .toggle-group-btn').forEach(btn => {
+                    if (btn.dataset.theme === 'dark') btn.classList.add('active');
+                    else btn.classList.remove('active');
+                });
+            }
+
+            loadConfig();
+            loadGraph();
+        });
+    </script>
+</body>
+</html>

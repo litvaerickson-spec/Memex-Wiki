@@ -6,9 +6,15 @@
 
 # English
 
-Memex-Wiki is a secure, offline-first, and resilient long-term memory system designed for AI agents (specifically integrated with Google Antigravity 2.0 and MCP clients). It compiles project documents and codebase knowledge into a human-readable Obsidian Markdown vault, automatically building a 3D visual knowledge graph (`[[Concept]]` links). 
+Memex-Wiki is a secure, offline-first, and resilient long-term memory system designed for AI agents (specifically integrated with Google Antigravity 2.0 and MCP clients). It compiles project documents and codebase knowledge into a human-readable Obsidian Markdown vault, automatically building a 3D visual knowledge graph (Concept links). 
 
 For queries, it uses the **RLM (Recursive Long-context Memory) Engine** to sequentially filter text chunks, avoiding context overload, VRAM OOM, and CPU overheating on local hardware.
+
+## Visual Interface
+
+| Dark Theme | Light Theme |
+| :---: | :---: |
+| ![Dark Theme](Dark_theme.png) | ![Light Theme](White_theme.png) |
 
 ## Architecture & Data Flow
 
@@ -132,9 +138,15 @@ To hook up this memory system to your AI agents, add the following stdio server 
 
 # Русский
 
-**Memex-Wiki** — это безопасная, автономная и приватная система долгосрочной памяти для ИИ-агентов (в частности, для интеграции с Google Antigravity 2.0 и MCP-клиентами). Система аккумулирует знания в виде человекочитаемого графа связей (Markdown-файлов с YAML-метаданными) в вашем Obsidian Vault и автоматически строит 3D-визуализацию графа (`[[Concept]]` ссылки).
+**Memex-Wiki** — это безопасная, автономная и приватная система долгосрочной памяти для ИИ-агентов (в частности, для интеграции с Google Antigravity 2.0 и MCP-клиентами). Система аккумулирует знания в виде человекочитаемого графа связей (Markdown-файлов с YAML-метаданными) в вашем Obsidian Vault и автоматически строит 3D-визуализацию графа (связи концептов).
 
 Для поиска используется движок **RLM (Recursive Long-context Memory)**, который осуществляет последовательную фильтрацию текстовых чанков, исключая перегрузку контекста, перегрев процессора и нехватку видеопамяти (VRAM OOM).
+
+## Интерфейс панели управления
+
+| Темная тема | Светлая тема |
+| :---: | :---: |
+| ![Темная тема](Dark_theme.png) | ![Светлая тема](White_theme.png) |
 
 ## Архитектура системы и потоки данных
 

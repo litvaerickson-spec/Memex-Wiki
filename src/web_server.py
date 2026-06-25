@@ -1,0 +1,522 @@
+import os
+import sys
+import json
+import re
+import yaml
+import logging
+from http.server import HTTPServer, BaseHTTPRequestHandler
+import urllib.parse
+import threading
+
+pull_status = {"status": "idle", "progress": 0, "error": None, "model": ""}
+pull_status_lock = threading.Lock()
+
+def pull_model_thread(model_name, ollama_url_base):
+    global pull_status
+    with pull_status_lock:
+        pull_status = {"status": "downloading", "progress": 0, "error": None, "model": model_name}
+    
+    try:
+        parsed = urllib.parse.urlparse(ollama_url_base)
+        base_url = f"{parsed.scheme}://{parsed.netloc}"
+        url = f"{base_url}/api/pull"
+        
+        req = urllib.request.Request(
+            url,
+            data=json.dumps({"name": model_name}).encode("utf-8"),
+            headers={"Content-Type": "application/json"}
+        )
+        
+        with urllib.request.urlopen(req) as response:
+            for line in response:
+                if not line:
+                    continue
+                data = json.loads(line.decode("utf-8"))
+                status = data.get("status", "")
+                
+                with pull_status_lock:
+                    if status == "success":
+                        pull_status = {"status": "success", "progress": 100, "error": None, "model": model_name}
+                        return
+                    
+                    total = data.get("total", 0)
+                    completed = data.get("completed", 0)
+                    if total > 0:
+                        pct = int((completed / total) * 100)
+                        pull_status["progress"] = pct
+                        pull_status["status"] = "downloading"
+                    else:
+                        pull_status["status"] = status
+    except Exception as e:
+        import logging
+        logging.getLogger("web_server").error(f"Error pulling model {model_name}: {e}")
+        with pull_status_lock:
+            pull_status = {"status": "error", "progress": 0, "error": str(e), "model": model_name}
+
+
+# Добавляем текущую папку в пути поиска модулей
+sys.path.append(os.path.dirname(os.path.abspath(__file__)))
+
+from memex_tools import MemexTools
+from graph_linter import GraphLinter
+
+# Настраиваем логирование
+logging.basicConfig(level=logging.INFO)
+logger = logging.getLogger("web_server")
+
+# Разрешаем запуск из любой директории
+cwd = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+config_path = os.path.join(cwd, "config.yaml")
+
+# Инициализируем инструменты
+tools = MemexTools(config_path)
+linter = GraphLinter(config_path)
+
+def should_exclude(rel_path, exclude_patterns):
+    parts = rel_path.replace("\\", "/").split("/")
+    for part in parts:
+        if part in exclude_patterns:
+            return True
+    for pat in exclude_patterns:
+        if pat.startswith("*."):
+            ext = pat[1:] # e.g. .png
+            if rel_path.lower().endswith(ext.lower()):
+                return True
+    # Игнорируем скрытые файлы (начинающиеся с точки)
+    for part in parts:
+        if part.startswith("."):
+            return True
+    return False
+
+def get_ollama_models(ollama_url_base="http://localhost:11434"):
+    import urllib.request
+    import urllib.parse
+    try:
+        parsed = urllib.parse.urlparse(ollama_url_base)
+        base_url = f"{parsed.scheme}://{parsed.netloc}"
+        url = f"{base_url}/api/tags"
+        req = urllib.request.Request(url)
+        with urllib.request.urlopen(req, timeout=2.0) as response:
+            data = json.loads(response.read().decode("utf-8"))
+            return [m["name"] for m in data.get("models", [])]
+    except Exception as e:
+        logger.error(f"Error fetching Ollama models: {e}")
+        return []
+
+class MemexDashboardHandler(BaseHTTPRequestHandler):
+    def log_message(self, format, *args):
+        # Подавляем стандартный лог запросов в консоли, оставляя только важные сообщения
+        pass
+
+    def _set_headers(self, status=200, content_type="application/json"):
+        self.send_response(status)
+        self.send_header("Content-Type", f"{content_type}; charset=utf-8")
+        self.send_header("Access-Control-Allow-Origin", "*")
+        self.send_header("Access-Control-Allow-Methods", "GET, POST, OPTIONS")
+        self.send_header("Access-Control-Allow-Headers", "Content-Type")
+        self.end_headers()
+
+    def do_OPTIONS(self):
+        self._set_headers(200)
+
+    def do_GET(self):
+        parsed_url = urllib.parse.urlparse(self.path)
+        path = parsed_url.path
+        query_params = urllib.parse.parse_qs(parsed_url.query)
+
+        # 1. Отдача веб-интерфейса (HTML)
+        if path in ["/", "/index.html"]:
+            html_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), "web", "index.html")
+            try:
+                with open(html_path, "r", encoding="utf-8") as f:
+                    html_content = f.read()
+                self._set_headers(200, "text/html")
+                self.wfile.write(html_content.encode("utf-8"))
+            except Exception as e:
+                self._set_headers(500, "text/plain")
+                self.wfile.write(f"Ошибка загрузки интерфейса: {e}".encode("utf-8"))
+            return
+
+        # 2. API: Получение конфигурации
+        if path == "/api/config":
+            tools.load_config()
+            llm_config = tools.config.get("llm", {})
+            obsidian_vault = tools.config.get("obsidian_vault_path", "")
+            raw_folder = tools.config.get("raw_folder_path", "")
+            exclude_patterns = tools.config.get("exclude_patterns", [])
+            self._set_headers(200)
+            self.wfile.write(json.dumps({
+                "llm": llm_config,
+                "obsidian_vault_path": obsidian_vault,
+                "raw_folder_path": raw_folder,
+                "exclude_patterns": exclude_patterns
+            }, ensure_ascii=False).encode("utf-8"))
+            return
+
+        # 3. API: Получение графа
+        if path == "/api/graph":
+            tools.load_config()
+            wiki_dir = tools.wiki_dir
+            nodes = []
+            edges = []
+            
+            if os.path.exists(wiki_dir):
+                # Находим все файлы
+                file_map = {}
+                for root, dirs, files in os.walk(wiki_dir):
+                    for f in files:
+                        if f.endswith(".md"):
+                            filepath = os.path.join(root, f)
+                            rel_path = os.path.relpath(filepath, wiki_dir)
+                            try:
+                                with open(filepath, "r", encoding="utf-8") as file_obj:
+                                    content = file_obj.read()
+                                meta, body = tools.parse_frontmatter(content)
+                                file_id = meta.get("id", f[:-3]).lower()
+                                
+                                # Исключаем лог и оглавление из графа
+                                if file_id in ["log"]:
+                                    continue
+                                    
+                                file_map[file_id] = {
+                                    "id": file_id,
+                                    "type": meta.get("type", "concept"),
+                                    "relations": tools.extract_wikilinks(meta.get("relations", ""))
+                                }
+                                # Также добавим связи из тела файла
+                                file_map[file_id]["relations"].extend(tools.extract_wikilinks(body))
+                                file_map[file_id]["relations"] = list(set(file_map[file_id]["relations"]))
+                            except Exception as e:
+                                logger.error(f"Не удалось распарсить {rel_path} для графа: {e}")
+                                
+                # Формируем узлы и связи
+                for fid, info in file_map.items():
+                    nodes.append({
+                        "id": fid,
+                        "type": info["type"]
+                    })
+                    for rel in info["relations"]:
+                        # Проверяем, что целевой узел существует
+                        if rel.lower() in file_map:
+                            edges.append({
+                                "from": fid,
+                                "to": rel.lower()
+                            })
+                            
+            self._set_headers(200)
+            self.wfile.write(json.dumps({"nodes": nodes, "edges": edges}, ensure_ascii=False).encode("utf-8"))
+            return
+
+        # 4. API: Детали конкретной заметки
+        if path == "/api/note":
+            note_id = query_params.get("id", [None])[0]
+            if not note_id:
+                self._set_headers(400)
+                self.wfile.write(json.dumps({"error": "Missing parameter 'id'"}, ensure_ascii=False).encode("utf-8"))
+                return
+                
+            tools.load_config()
+            wiki_dir = tools.wiki_dir
+            # Ищем файл
+            found = False
+            note_content = ""
+            for root, dirs, files in os.walk(wiki_dir):
+                for f in files:
+                    if f.endswith(".md"):
+                        filepath = os.path.join(root, f)
+                        try:
+                            with open(filepath, "r", encoding="utf-8") as file_obj:
+                                content = file_obj.read()
+                            meta, body = tools.parse_frontmatter(content)
+                            if meta.get("id", "").lower() == note_id.lower() or f[:-3].lower() == note_id.lower():
+                                found = True
+                                note_content = {
+                                    "success": True,
+                                    "id": meta.get("id", f[:-3]),
+                                    "type": meta.get("type", "unknown"),
+                                    "last_updated": meta.get("last_updated", "-"),
+                                    "tags": meta.get("tags", []),
+                                    "relations": meta.get("relations", ""),
+                                    "body": body.strip()
+                                }
+                                break
+                        except Exception:
+                            pass
+                if found:
+                    break
+                    
+            if found:
+                self._set_headers(200)
+                self.wfile.write(json.dumps(note_content, ensure_ascii=False).encode("utf-8"))
+            else:
+                self._set_headers(404)
+                self.wfile.write(json.dumps({"success": false, "error": f"Note '{note_id}' not found"}, ensure_ascii=False).encode("utf-8"))
+            return
+
+        # 5. API: Запуск линтера
+        if path == "/api/lint":
+            linter.load_config()
+            report = linter.lint_memory()
+            self._set_headers(200)
+            self.wfile.write(json.dumps({"report": report}, ensure_ascii=False).encode("utf-8"))
+            return
+
+        # 5a. API: Сканирование папки raw для поиска новых и измененных файлов
+        if path == "/api/scan_raw":
+            tools.load_config()
+            raw_dir = tools.raw_dir
+            wiki_dir = tools.wiki_dir
+            exclude = tools.config.get("exclude_patterns", [])
+            
+            new_files = []
+            modified_files = []
+            
+            if os.path.exists(raw_dir):
+                # Находим все файлы в wiki/ для сверки
+                wiki_files = {}
+                for root, dirs, files in os.walk(wiki_dir):
+                    for f in files:
+                        if f.endswith(".md"):
+                            wiki_files[f[:-3].lower()] = os.path.getmtime(os.path.join(root, f))
+                            
+                # Сканируем raw folder
+                for root, dirs, files in os.walk(raw_dir):
+                    # Отфильтруем dirs, чтобы walk не шел в исключения
+                    dirs[:] = [d for d in dirs if not should_exclude(os.path.join(root, d), exclude)]
+                    
+                    for f in files:
+                        filepath = os.path.join(root, f)
+                        rel_path = os.path.relpath(filepath, raw_dir)
+                        
+                        if should_exclude(rel_path, exclude):
+                            continue
+                            
+                        # Интересуют только текстовые / программные файлы
+                        ext = os.path.splitext(f)[1].lower()
+                        if ext not in [".txt", ".md", ".py", ".js", ".sh", ".yaml", ".json", ".docx", ".pdf", ".html", ".css", ".go", ".rs", ".cpp", ".h"]:
+                            continue
+                            
+                        basename_no_ext = os.path.splitext(f)[0]
+                        normalized_id = tools.normalize_concept_name(basename_no_ext)
+                        
+                        raw_mtime = os.path.getmtime(filepath)
+                        
+                        if normalized_id not in wiki_files:
+                            new_files.append({
+                                "rel_path": rel_path,
+                                "name": f,
+                                "size": os.path.getsize(filepath)
+                            })
+                        elif raw_mtime > wiki_files[normalized_id] + 5:
+                            modified_files.append({
+                                "rel_path": rel_path,
+                                "name": f,
+                                "size": os.path.getsize(filepath)
+                            })
+            
+            self._set_headers(200)
+            self.wfile.write(json.dumps({"new_files": new_files, "modified_files": modified_files}, ensure_ascii=False).encode("utf-8"))
+            return
+
+        # 5b. API: Получение списка локальных моделей Ollama
+        if path == "/api/ollama_models":
+            tools.load_config()
+            ollama_url = tools.config.get("llm", {}).get("ollama_url", "http://localhost:11434/api/generate")
+            models = get_ollama_models(ollama_url)
+            self._set_headers(200)
+            self.wfile.write(json.dumps({"models": models}, ensure_ascii=False).encode("utf-8"))
+            return
+
+        # 5c. API: Получение статуса скачивания модели Ollama
+        if path == "/api/ollama_pull_status":
+            with pull_status_lock:
+                status_copy = dict(pull_status)
+            self._set_headers(200)
+            self.wfile.write(json.dumps(status_copy, ensure_ascii=False).encode("utf-8"))
+            return
+
+        # 6. API: Получение логов импорта
+        if path == "/api/logs":
+            tools.load_config()
+            log_filepath = os.path.join(tools.wiki_dir, "log.md")
+            logs = []
+            if os.path.exists(log_filepath):
+                try:
+                    with open(log_filepath, "r", encoding="utf-8") as f:
+                        log_content = f.read()
+                    _, body = tools.parse_frontmatter(log_content)
+                    # Вытаскиваем элементы списка из лога
+                    # Формат: - **2026-06-25**: Импортирован...
+                    matches = re.findall(r"-\s*\*\*(.*?)\*\*:\s*(.*)", body)
+                    for date, msg in matches:
+                        logs.append({
+                            "date": date,
+                            "message": msg
+                        })
+                except Exception as e:
+                    logger.error(f"Не удалось распарсить log.md: {e}")
+            self._set_headers(200)
+            self.wfile.write(json.dumps(logs, ensure_ascii=False).encode("utf-8"))
+            return
+
+        # Неизвестный маршрут
+        self._set_headers(404, "text/plain")
+        self.wfile.write("Not Found".encode("utf-8"))
+
+    def do_POST(self):
+        parsed_url = urllib.parse.urlparse(self.path)
+        path = parsed_url.path
+
+        # Читаем тело POST запроса
+        content_length = int(self.headers.get("Content-Length", 0))
+        post_data = self.rfile.read(content_length).decode("utf-8")
+        
+        try:
+            payload = json.loads(post_data) if post_data else {}
+        except Exception:
+            self._set_headers(400)
+            self.wfile.write(json.dumps({"error": "Invalid JSON"}, ensure_ascii=False).encode("utf-8"))
+            return
+
+        # 1. API: Запись конфигурации
+        if path == "/api/config":
+            try:
+                backend = payload.get("backend")
+                model = payload.get("model")
+                
+                if not backend or not model:
+                    self._set_headers(400)
+                    self.wfile.write(json.dumps({"error": "Missing 'backend' or 'model'"}, ensure_ascii=False).encode("utf-8"))
+                    return
+                
+                # Читаем весь config.yaml
+                with open(config_path, "r", encoding="utf-8") as f:
+                    config = yaml.safe_load(f) or {}
+                
+                if "llm" not in config:
+                    config["llm"] = {}
+                    
+                config["llm"]["backend"] = backend
+                config["llm"]["model"] = model
+                
+                if backend == "gemini":
+                    config["llm"]["gemini_api_key"] = payload.get("gemini_api_key", "")
+                else:
+                    config["llm"]["ollama_url"] = payload.get("ollama_url", "http://localhost:11434/api/generate")
+                
+                # Дополнительные настройки путей и исключений
+                if "obsidian_vault_path" in payload:
+                    config["obsidian_vault_path"] = payload["obsidian_vault_path"]
+                    vault = payload["obsidian_vault_path"]
+                    if not vault.endswith("/"):
+                        vault += "/"
+                    config["wiki_folder_path"] = vault + "wiki/"
+                    
+                if "raw_folder_path" in payload:
+                    config["raw_folder_path"] = payload["raw_folder_path"]
+                    
+                if "exclude_patterns" in payload:
+                    config["exclude_patterns"] = payload["exclude_patterns"]
+                
+                # Записываем обратно
+                with open(config_path, "w", encoding="utf-8") as f:
+                    yaml.safe_dump(config, f, allow_unicode=True, default_flow_style=False)
+                
+                # Перезагружаем конфиг в инстансах инструментов
+                tools.load_config()
+                linter.load_config()
+                
+                self._set_headers(200)
+                self.wfile.write(json.dumps({"success": True}, ensure_ascii=False).encode("utf-8"))
+            except Exception as e:
+                self._set_headers(500)
+                self.wfile.write(json.dumps({"success": False, "error": str(e)}, ensure_ascii=False).encode("utf-8"))
+            return
+
+        # 1a. API: Запуск скачивания модели Ollama
+        if path == "/api/ollama_pull":
+            try:
+                model_name = payload.get("name")
+                if not model_name:
+                    self._set_headers(400)
+                    self.wfile.write(json.dumps({"error": "Missing 'name' parameter"}, ensure_ascii=False).encode("utf-8"))
+                    return
+                    
+                tools.load_config()
+                ollama_url = tools.config.get("llm", {}).get("ollama_url", "http://localhost:11434/api/generate")
+                
+                t = threading.Thread(target=pull_model_thread, args=(model_name, ollama_url))
+                t.daemon = True
+                t.start()
+                
+                self._set_headers(200)
+                self.wfile.write(json.dumps({"success": True}, ensure_ascii=False).encode("utf-8"))
+            except Exception as e:
+                self._set_headers(500)
+                self.wfile.write(json.dumps({"success": False, "error": str(e)}, ensure_ascii=False).encode("utf-8"))
+            return
+
+        # 2. API: Поиск по памяти (query_memory)
+        if path == "/api/query":
+            query = payload.get("query")
+            if not query:
+                self._set_headers(400)
+                self.wfile.write(json.dumps({"error": "Missing 'query' parameter"}, ensure_ascii=False).encode("utf-8"))
+                return
+                
+            try:
+                tools.load_config()
+                answer = tools.query_memory(query)
+                self._set_headers(200)
+                self.wfile.write(json.dumps({"answer": answer}, ensure_ascii=False).encode("utf-8"))
+            except Exception as e:
+                self._set_headers(500)
+                self.wfile.write(json.dumps({"error": str(e)}, ensure_ascii=False).encode("utf-8"))
+            return
+
+        # 3. API: Импорт файла (ingest_source)
+        if path == "/api/ingest":
+            filename = payload.get("filename")
+            if not filename:
+                self._set_headers(400)
+                self.wfile.write(json.dumps({"error": "Missing 'filename' parameter"}, ensure_ascii=False).encode("utf-8"))
+                return
+                
+            try:
+                tools.load_config()
+                result = tools.ingest_source(filename)
+                
+                # Если в ответе есть слово "Ошибка", считаем операцию провалившейся
+                if result.startswith("Ошибка"):
+                    self._set_headers(200)
+                    self.wfile.write(json.dumps({"success": False, "error": result}, ensure_ascii=False).encode("utf-8"))
+                else:
+                    self._set_headers(200)
+                    self.wfile.write(json.dumps({"success": True, "result": result}, ensure_ascii=False).encode("utf-8"))
+            except Exception as e:
+                self._set_headers(500)
+                self.wfile.write(json.dumps({"success": False, "error": str(e)}, ensure_ascii=False).encode("utf-8"))
+            return
+
+        # Неизвестный маршрут
+        self._set_headers(404, "text/plain")
+        self.wfile.write("Not Found".encode("utf-8"))
+
+def run_server(port=8000):
+    server_address = ("", port)
+    httpd = HTTPServer(server_address, MemexDashboardHandler)
+    logger.info(f"Сервер панели управления Memex-Wiki успешно запущен на http://localhost:{port}")
+    try:
+        httpd.serve_forever()
+    except KeyboardInterrupt:
+        logger.info("\nОстановка сервера...")
+        httpd.server_close()
+
+if __name__ == "__main__":
+    port = 8000
+    if len(sys.argv) > 1:
+        try:
+            port = int(sys.argv[1])
+        except ValueError:
+            pass
+    run_server(port)

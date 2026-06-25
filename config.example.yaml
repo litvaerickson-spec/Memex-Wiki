@@ -1,0 +1,63 @@
+# Конфигурация системы гибридной памяти Memex-Wiki (Шаблон)
+# Скопируйте этот файл в config.yaml и укажите свои пути к директориям.
+
+# Пути к папкам базы знаний Obsidian и проектов
+# Для macOS: "/Users/username/Documents/Obsidian/Vault/"
+# Для Windows: "C:/Users/username/Documents/Obsidian/Vault/"
+# Для Linux: "/home/username/Obsidian/Vault/"
+obsidian_vault_path: "/path/to/your/Obsidian/Vault/"
+wiki_folder_path: "/path/to/your/Obsidian/Vault/wiki/"
+# В качестве raw-папки выступает коренной каталог ваших проектов для сканирования и чтения
+raw_folder_path: "/path/to/your/projects/directory/"
+
+# Настройки LLM провайдера для RLM Engine
+llm:
+  # Возможные значения: "gemini" или "ollama"
+  backend: "ollama"
+  # Модель для Gemini (например, gemini-2.5-flash) или для Ollama (например, qwen2.5:3b)
+  model: "qwen2.5:3b"
+  # URL для подключения к Ollama (если выбран backend: "ollama")
+  ollama_url: "http://localhost:11434/api/generate"
+  # Ключ Gemini API (можно оставить пустым, если задана переменная окружения GEMINI_API_KEY)
+  gemini_api_key: ""
+
+# Настройки алгоритма RLM (Recursive Long context Memory)
+rlm:
+  # Максимальное количество токенов (символов) в одном чанке для последовательного опроса
+  max_chunk_tokens: 3000
+  # Перекрытие между чанками для сохранения контекста на границах
+  chunk_overlap: 300
+
+# Список папок и паттернов, которые исключаются из обработки в raw-папке во избежание коллизий
+exclude_patterns:
+  - "01_MyObsidian"                     # Папка самого Obsidian
+  - ".git"
+  - ".github"
+  - "node_modules"
+  - "venv"
+  - ".venv"
+  - "__pycache__"
+  - ".DS_Store"
+  - "*.pyc"
+  - "*.png"
+  - "*.jpg"
+  - "*.jpeg"
+  - "*.gif"
+  - "*.zip"
+  - "*.tar.gz"
+  - "*.lock"
+
+# Настройки безопасности и авто-очистки конфиденциальных данных
+security:
+  redact_secrets: true
+  redact_patterns:
+    - name: "Google API Key / Gemini"
+      regex: 'AIzaSy[A-Za-z0-9_-]{33}'
+    - name: "OpenAI API Key"
+      regex: 'sk-[A-Za-z0-9]{20,}'
+    - name: "OpenAI Project API Key"
+      regex: 'sk-proj-[A-Za-z0-9_-]{40,}'
+    - name: "Database Connection String"
+      regex: '(mongodb\+srv|mongodb|postgresql|postgres|mysql|redis):\/\/[A-Za-z0-9_]+:[^@\s]+@[A-Za-z0-9.-]+(?::\d+)?(?:\/[A-Za-z0-9_.-]*)?'
+    - name: "Generic Password/Token Assign"
+      regex: '(?i)(password|passwd|token|secret|private_key)\s*[:=]\s*["''][^"''\s]{4,}["'']'

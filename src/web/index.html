@@ -2208,7 +2208,7 @@
             btn.disabled  = true;
             scanBtn.disabled = true;
 
-            // --- Панель прогресса пакетного импорта ---
+            // --- Панель прогресса ---
             let ingestPanel = document.getElementById('ingest-batch-panel');
             if (!ingestPanel) {
                 ingestPanel = document.createElement('div');
@@ -2217,72 +2217,129 @@
                 btn.closest('.glass-panel').insertBefore(ingestPanel, btn.closest('.glass-panel').querySelector('#scan-results-wrapper'));
             }
 
-            let isPaused = false;
+            // --- Состояние ---
+            let isPaused  = false;
             let isStopped = false;
+            let isWaitingServer = false; // идёт fetch прямо сейчас
+            let currentAbort = null;     // AbortController текущего запроса
             let doneCount = 0, errCount = 0;
             const startTime = Date.now();
 
+            // --- Глобальные обработчики кнопок (мгновенная реакция) ---
+            window._ingestPause = () => {
+                if (isWaitingServer) {
+                    // Нельзя приостановить посреди запроса — покажем статус
+                    isPaused = !isPaused;
+                    const badge = document.getElementById('ingest-status-badge');
+                    if (badge) badge.textContent = isPaused
+                        ? (currentLang==='ru' ? '⏸ Пауза после текущего файла...' : '⏸ Pausing after current file...')
+                        : (currentLang==='ru' ? '↩ Пауза отменена' : '↩ Pause cancelled');
+                } else {
+                    isPaused = !isPaused;
+                    _ingestUpdateButtons();
+                }
+            };
+
+            window._ingestStop = () => {
+                isStopped = true;
+                isPaused  = false;
+                // Мгновенно отменяем текущий запрос если он идёт
+                if (currentAbort) currentAbort.abort();
+                // Мгновенно обновляем UI
+                const badge = document.getElementById('ingest-status-badge');
+                if (badge) badge.textContent = currentLang==='ru'
+                    ? '🛑 Останавливаем...' : '🛑 Stopping...';
+                const stopBtn = document.getElementById('ingest-stop-btn');
+                if (stopBtn) { stopBtn.disabled = true; stopBtn.style.opacity = '0.4'; }
+                const pauseBtn = document.getElementById('ingest-pause-btn');
+                if (pauseBtn) { pauseBtn.disabled = true; pauseBtn.style.opacity = '0.4'; }
+            };
+
+            window._ingestUpdateButtons = () => {
+                const pauseBtn = document.getElementById('ingest-pause-btn');
+                if (pauseBtn) pauseBtn.textContent = isPaused
+                    ? (currentLang==='ru' ? '▶ Продолжить' : '▶ Resume')
+                    : (currentLang==='ru' ? '⏸ Пауза' : '⏸ Pause');
+                const badge = document.getElementById('ingest-status-badge');
+                if (badge && isPaused) badge.textContent = currentLang==='ru'
+                    ? '⏸ Приостановлено' : '⏸ Paused';
+            };
+
+            // --- Рендер панели (один раз при старте и после каждого файла) ---
             const renderPanel = (thermalInfo, currentFile, idx) => {
-                const tlabels = { cool: '🟢 Холодно', warm: '🟡 Тепло', hot: '🟠 Горячо', critical: '🔴 Критично' };
-                const tlabelsEn = { cool: '🟢 Cool', warm: '🟡 Warm', hot: '🟠 Hot', critical: '🔴 Critical' };
+                const tlabels   = { cool:'🟢 Холодно', warm:'🟡 Тепло', hot:'🟠 Горячо', critical:'🔴 Критично' };
+                const tlabelsEn = { cool:'🟢 Cool',    warm:'🟡 Warm',  hot:'🟠 Hot',    critical:'🔴 Critical'  };
                 const tmap = currentLang === 'ru' ? tlabels : tlabelsEn;
-                const tl = thermalInfo ? tmap[thermalInfo.label] || '🟢' : '🟢';
+                const tl   = thermalInfo ? (tmap[thermalInfo.label] || '🟢') : '🟢';
                 const idle = thermalInfo ? thermalInfo.cpu_idle.toFixed(0) : '—';
-                const pause = thermalInfo ? (thermalInfo.pause_ms / 1000).toFixed(0) : '0';
+                const pauseSecs = thermalInfo ? (thermalInfo.pause_ms/1000).toFixed(0) : '0';
+                const pct  = ((idx+1)/allFiles.length*100).toFixed(1);
 
                 ingestPanel.innerHTML = `
                     <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:12px;">
                         <div style="display:flex;align-items:center;gap:10px;">
-                            ${isPaused
-                                ? '<div style="width:12px;height:12px;border-radius:50%;background:var(--accent);"></div>'
-                                : '<div class="spinner" style="flex-shrink:0;"></div>'}
+                            <div class="spinner" style="flex-shrink:0;" id="ingest-spinner"></div>
                             <span style="font-size:13px;font-weight:600;color:var(--text);">
-                                ${currentLang === 'ru'
-                                    ? `Импорт ${idx+1} из ${allFiles.length}`
-                                    : `Importing ${idx+1} of ${allFiles.length}`}
+                                ${currentLang==='ru' ? `Импорт ${idx+1} из ${allFiles.length}` : `Importing ${idx+1} of ${allFiles.length}`}
                             </span>
                         </div>
                         <div style="display:flex;gap:8px;">
-                            <button onclick="window._ingestPause()" style="padding:4px 10px;font-size:11px;border-radius:6px;border:1px solid var(--border);background:var(--bg);color:var(--text);cursor:pointer;">
+                            <button id="ingest-pause-btn" onclick="window._ingestPause()"
+                                style="padding:4px 10px;font-size:11px;border-radius:6px;border:1px solid var(--border);background:var(--bg);color:var(--text);cursor:pointer;">
                                 ${isPaused ? (currentLang==='ru'?'▶ Продолжить':'▶ Resume') : (currentLang==='ru'?'⏸ Пауза':'⏸ Pause')}
                             </button>
-                            <button onclick="window._ingestStop()" style="padding:4px 10px;font-size:11px;border-radius:6px;border:1px solid #e55;background:transparent;color:#e55;cursor:pointer;">
+                            <button id="ingest-stop-btn" onclick="window._ingestStop()"
+                                style="padding:4px 10px;font-size:11px;border-radius:6px;border:1px solid #e55;background:transparent;color:#e55;cursor:pointer;">
                                 ${currentLang==='ru'?'✕ Стоп':'✕ Stop'}
                             </button>
                         </div>
                     </div>
                     <div style="height:4px;background:var(--border);border-radius:4px;overflow:hidden;margin-bottom:12px;">
-                        <div style="height:100%;width:${((idx+1)/allFiles.length*100).toFixed(1)}%;background:linear-gradient(90deg,var(--accent),var(--success));border-radius:4px;transition:width 0.4s;"></div>
+                        <div style="height:100%;width:${pct}%;background:linear-gradient(90deg,var(--accent),var(--success));border-radius:4px;transition:width 0.4s;"></div>
                     </div>
-                    <div style="display:flex;gap:16px;align-items:center;flex-wrap:wrap;margin-bottom:10px;">
-                        <div style="font-size:11px;color:var(--text-muted);font-family:monospace;flex:1;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">
+                    <div style="display:flex;gap:12px;align-items:center;flex-wrap:wrap;margin-bottom:10px;">
+                        <div style="font-size:11px;color:var(--text-muted);font-family:monospace;flex:1;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;" id="ingest-status-badge">
                             ${currentFile || ''}
                         </div>
-                        <div style="font-size:11px;padding:2px 8px;border-radius:12px;background:var(--bg);border:1px solid var(--border);white-space:nowrap;">
-                            ${tl} &nbsp;CPU idle: ${idle}% &nbsp;·&nbsp; ${currentLang==='ru'?'Пауза':'Pause'}: ${pause}s
+                        <div style="font-size:11px;padding:2px 8px;border-radius:12px;background:var(--bg);border:1px solid var(--border);white-space:nowrap;" id="ingest-thermal-badge">
+                            ${tl} &nbsp;CPU idle: ${idle}% &nbsp;·&nbsp; ${currentLang==='ru'?'Пауза':'Delay'}: ${pauseSecs}s
                         </div>
                     </div>
                     <div style="display:flex;gap:20px;">
-                        <div style="font-size:12px;color:var(--success);">✓ ${currentLang==='ru'?'Готово':'Done'}: ${doneCount}</div>
-                        <div style="font-size:12px;color:#e55;">✗ ${currentLang==='ru'?'Ошибок':'Errors'}: ${errCount}</div>
-                        <div style="font-size:12px;color:var(--text-muted);">${currentLang==='ru'?'Осталось':'Left'}: ${allFiles.length - idx - 1}</div>
+                        <div style="font-size:12px;color:var(--success);" id="ingest-count-done">✓ ${currentLang==='ru'?'Готово':'Done'}: ${doneCount}</div>
+                        <div style="font-size:12px;color:#e55;"         id="ingest-count-err" >✗ ${currentLang==='ru'?'Ошибок':'Errors'}: ${errCount}</div>
+                        <div style="font-size:12px;color:var(--text-muted);"                   >${currentLang==='ru'?'Осталось':'Left'}: ${allFiles.length-idx-1}</div>
                     </div>
-                    ${isPaused ? `<div style="margin-top:10px;padding:8px 12px;border-radius:8px;background:#ffa5001a;border:1px solid #ffa500;font-size:12px;color:#ffa500;">
-                        ${currentLang==='ru'?'⏸ Импорт приостановлен. Нажмите «Продолжить» для возобновления.':'⏸ Import paused. Click Resume to continue.'}
-                    </div>` : ''}
                 `;
             };
 
-            // Управление паузой/остановкой
-            window._ingestPause = () => { isPaused = !isPaused; };
-            window._ingestStop  = () => { isStopped = true; isPaused = false; };
+            // Вспомогательные обновления отдельных элементов (без перерисовки всей панели)
+            const updateStatus = (text) => {
+                const el = document.getElementById('ingest-status-badge');
+                if (el) el.textContent = text;
+            };
+            const updateCounts = () => {
+                const d = document.getElementById('ingest-count-done');
+                const e = document.getElementById('ingest-count-err');
+                if (d) d.textContent = `✓ ${currentLang==='ru'?'Готово':'Done'}: ${doneCount}`;
+                if (e) e.textContent = `✗ ${currentLang==='ru'?'Ошибок':'Errors'}: ${errCount}`;
+            };
+            const updateThermal = (thermalInfo) => {
+                const el = document.getElementById('ingest-thermal-badge');
+                if (!el || !thermalInfo) return;
+                const tlabels   = { cool:'🟢 Холодно', warm:'🟡 Тепло', hot:'🟠 Горячо', critical:'🔴 Критично' };
+                const tlabelsEn = { cool:'🟢 Cool',    warm:'🟡 Warm',  hot:'🟠 Hot',    critical:'🔴 Critical'  };
+                const tmap = currentLang === 'ru' ? tlabels : tlabelsEn;
+                el.textContent = `${tmap[thermalInfo.label]||'🟢'}  CPU idle: ${thermalInfo.cpu_idle.toFixed(0)}%  ·  ${currentLang==='ru'?'Пауза':'Delay'}: ${(thermalInfo.pause_ms/1000).toFixed(0)}s`;
+            };
 
             const sleep = ms => new Promise(r => setTimeout(r, ms));
             const waitIfPaused = async () => {
-                while (isPaused && !isStopped) await sleep(300);
+                if (isPaused) updateStatus(currentLang==='ru' ? '⏸ Приостановлено' : '⏸ Paused');
+                while (isPaused && !isStopped) await sleep(200);
             };
 
-            // Основной цикл
+            // --- Основной цикл ---
             for (let i = 0; i < allFiles.length; i++) {
                 if (isStopped) break;
                 await waitIfPaused();
@@ -2290,45 +2347,57 @@
 
                 const file = allFiles[i];
 
-                // 1. Проверяем тепловое давление
+                // Тепловой мониторинг
                 let thermalInfo = null;
                 try {
                     const tr = await fetch('/api/thermal');
                     thermalInfo = await tr.json();
                 } catch (_) {}
 
-                // 2. Обновляем панель
+                // Рисуем панель (перерисовываем только между файлами)
                 renderPanel(thermalInfo, file.rel_path, i);
 
-                // 3. Адаптивная пауза (если система горячая)
-                if (thermalInfo && thermalInfo.pause_ms > 0) {
-                    const pauseSec = thermalInfo.pause_ms / 1000;
-                    // Обратный отсчёт в панели
-                    for (let s = pauseSec; s > 0; s--) {
-                        if (isStopped || !isPaused && thermalInfo.pause_ms === 0) break;
-                        ingestPanel.querySelector('[style*="CPU idle"]').textContent =
-                            `${currentLang==='ru'?'🌡 Охлаждаюсь':'🌡 Cooling'} ${s}s — CPU idle: ${thermalInfo.cpu_idle.toFixed(0)}% · ${thermalInfo.label}`;
-                        await sleep(1000);
+                // Тепловая пауза с обратным отсчётом
+                if (thermalInfo && thermalInfo.pause_ms > 0 && !isStopped) {
+                    for (let s = Math.ceil(thermalInfo.pause_ms/1000); s > 0; s--) {
                         if (isStopped) break;
+                        updateStatus(`${currentLang==='ru'?'🌡 Охлаждаюсь':'🌡 Cooling'} ${s}s...`);
+                        await sleep(1000);
                     }
+                    if (isStopped) break;
+                    await waitIfPaused();
+                    if (isStopped) break;
+                    // Обновляем имя файла после паузы
+                    updateStatus(file.rel_path);
                 }
 
-                if (isStopped) break;
-                await waitIfPaused();
-
-                // 4. Выполняем импорт
+                // Импорт — с AbortController чтобы Stop реально прерывал запрос
+                isWaitingServer = true;
+                updateStatus(`⏳ ${currentLang==='ru'?'Отправляю в LLM...':'Sending to LLM...'} ${file.rel_path}`);
+                currentAbort = new AbortController();
                 try {
                     const resp = await fetch('/api/ingest', {
-                        method: 'POST',
+                        method:  'POST',
                         headers: { 'Content-Type': 'application/json' },
-                        body: JSON.stringify({ filename: file.rel_path })
+                        body:    JSON.stringify({ filename: file.rel_path }),
+                        signal:  currentAbort.signal
                     });
                     const data = await resp.json();
                     if (data.success) doneCount++; else errCount++;
                 } catch (e) {
-                    errCount++;
-                    console.error('Ingest error:', file.rel_path, e);
+                    if (e.name === 'AbortError') {
+                        // Пользователь нажал Стоп — не считаем ошибкой
+                    } else {
+                        errCount++;
+                        console.error('Ingest error:', file.rel_path, e);
+                    }
+                } finally {
+                    isWaitingServer = false;
+                    currentAbort = null;
                 }
+
+                updateCounts();
+                if (isStopped) break;
             }
 
             // Финальная карточка

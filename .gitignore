@@ -23,3 +23,11 @@ Thumbs.db
 # Local logs and temporary files
 *.log
 src/test_result.md
+
+# Specifications and local research documents
+*ТЗ*
+*Концепция*
+analysis_results.md
+
+# Archive folder
+src/archive/

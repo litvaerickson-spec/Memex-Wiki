@@ -492,6 +492,12 @@
             to { transform: rotate(360deg); }
         }
 
+        @keyframes scanPulse {
+            0%   { width: 15%; margin-left: 0; }
+            50%  { width: 40%; margin-left: 30%; }
+            100% { width: 15%; margin-left: 85%; }
+        }
+
         /* Toast */
         .toast {
             position: absolute;
@@ -831,20 +837,74 @@
                     <button class="btn" id="scan-raw-btn" onclick="scanRawFiles()" data-i18n="btn_scan_projects">Сканировать проекты</button>
                     <button class="btn btn-secondary" id="ingest-all-btn" onclick="ingestAllScanned()" style="display: none;" data-i18n="btn_ingest_all">Импортировать все найденные</button>
                 </div>
-                
-                <div class="loader" id="scan-loader">
-                    <div class="spinner"></div>
-                    <span data-i18n="ingest_scan_loading">Анализ файлов в рабочей папке...</span>
+
+                <!-- Scan summary card (shown after scan completes) -->
+                <div id="scan-summary-card" style="display: none; border: 1px solid var(--success); border-radius: 10px; background: var(--bg); padding: 20px; margin-bottom: 12px;">
+                    <div style="display: flex; align-items: center; gap: 12px; margin-bottom: 16px;">
+                        <div style="width: 32px; height: 32px; border-radius: 50%; background: var(--success); display: flex; align-items: center; justify-content: center; flex-shrink: 0; font-size: 16px;">✓</div>
+                        <div>
+                            <div id="scan-summary-title" style="font-size: 14px; font-weight: 700; color: var(--text);">Сканирование завершено</div>
+                            <div id="scan-summary-time" style="font-size: 11px; color: var(--text-muted); margin-top: 2px;"></div>
+                        </div>
+                    </div>
+                    <div style="display: flex; gap: 0; border: 1px solid var(--border); border-radius: 8px; overflow: hidden;">
+                        <div style="flex: 1; text-align: center; padding: 14px 8px; border-right: 1px solid var(--border);">
+                            <div id="summary-dirs" style="font-size: 26px; font-weight: 700; color: var(--text);">0</div>
+                            <div style="font-size: 11px; color: var(--text-muted); text-transform: uppercase; letter-spacing: 0.5px; margin-top: 2px;" data-i18n="scan_dirs_label">Папок</div>
+                        </div>
+                        <div style="flex: 1; text-align: center; padding: 14px 8px; border-right: 1px solid var(--border);">
+                            <div id="summary-new" style="font-size: 26px; font-weight: 700; color: var(--success);">0</div>
+                            <div style="font-size: 11px; color: var(--text-muted); text-transform: uppercase; letter-spacing: 0.5px; margin-top: 2px;" data-i18n="scan_new_label">Новых</div>
+                        </div>
+                        <div style="flex: 1; text-align: center; padding: 14px 8px; border-right: 1px solid var(--border);">
+                            <div id="summary-modified" style="font-size: 26px; font-weight: 700; color: var(--accent);">0</div>
+                            <div style="font-size: 11px; color: var(--text-muted); text-transform: uppercase; letter-spacing: 0.5px; margin-top: 2px;" data-i18n="scan_modified_label">Изменённых</div>
+                        </div>
+                        <div style="flex: 1; text-align: center; padding: 14px 8px;">
+                            <div id="summary-uptodate" style="font-size: 26px; font-weight: 700; color: var(--text-muted);">0</div>
+                            <div style="font-size: 11px; color: var(--text-muted); text-transform: uppercase; letter-spacing: 0.5px; margin-top: 2px;" data-i18n="scan_uptodate_label">Актуальных</div>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Live scan progress panel -->
+                <div id="scan-progress-panel" style="display: none; border: 1px solid var(--border); border-radius: 10px; background: var(--bg); padding: 20px; margin-bottom: 12px;">
+                    <div style="display: flex; align-items: center; gap: 12px; margin-bottom: 14px;">
+                        <div class="spinner" style="flex-shrink: 0;"></div>
+                        <div style="flex: 1;">
+                            <div style="font-size: 12px; font-weight: 600; color: var(--text-muted); text-transform: uppercase; letter-spacing: 0.5px; margin-bottom: 4px;" data-i18n="scan_progress_label">Сканирование...</div>
+                            <div id="scan-current-dir" style="font-size: 12px; color: var(--text-muted); font-family: monospace; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; max-width: 420px;">—</div>
+                        </div>
+                    </div>
+                    <div style="height: 4px; background: var(--border); border-radius: 4px; overflow: hidden; margin-bottom: 14px;">
+                        <div id="scan-progress-bar" style="height: 100%; width: 15%; background: linear-gradient(90deg, var(--accent), var(--success)); border-radius: 4px; animation: scanPulse 1.4s ease-in-out infinite;"></div>
+                    </div>
+                    <div style="display: flex; gap: 24px;">
+                        <div style="text-align: center;">
+                            <div id="scan-count-dirs" style="font-size: 22px; font-weight: 700; color: var(--text);">0</div>
+                            <div style="font-size: 11px; color: var(--text-muted); text-transform: uppercase; letter-spacing: 0.5px;" data-i18n="scan_dirs_label">Папок</div>
+                        </div>
+                        <div style="width: 1px; background: var(--border);"></div>
+                        <div style="text-align: center;">
+                            <div id="scan-count-new" style="font-size: 22px; font-weight: 700; color: var(--success);">0</div>
+                            <div style="font-size: 11px; color: var(--text-muted); text-transform: uppercase; letter-spacing: 0.5px;" data-i18n="scan_new_label">Новых</div>
+                        </div>
+                        <div style="width: 1px; background: var(--border);"></div>
+                        <div style="text-align: center;">
+                            <div id="scan-count-modified" style="font-size: 22px; font-weight: 700; color: var(--accent);">0</div>
+                            <div style="font-size: 11px; color: var(--text-muted); text-transform: uppercase; letter-spacing: 0.5px;" data-i18n="scan_modified_label">Изменённых</div>
+                        </div>
+                    </div>
                 </div>
 
                 <div id="scan-results-wrapper" style="display: none; border: 1px solid var(--border); border-radius: 8px; background: var(--bg); padding: 16px; max-height: 400px; overflow-y: auto;">
                     <div id="scan-results-empty" style="color: var(--text-muted); font-size: 13px;" data-i18n="ingest_scan_empty">Все файлы актуальны. Новых изменений не найдено.</div>
-                    
+
                     <div id="new-files-section" style="display: none; margin-bottom: 20px;">
                         <h4 style="font-size: 13px; color: var(--success); text-transform: uppercase; margin-bottom: 10px;" data-i18n="ingest_new_files_h">Новые файлы в проектах</h4>
                         <div id="new-files-list" style="display: flex; flex-direction: column; gap: 8px;"></div>
                     </div>
-                    
+
                     <div id="modified-files-section" style="display: none;">
                         <h4 style="font-size: 13px; color: var(--accent); text-transform: uppercase; margin-bottom: 10px;" data-i18n="ingest_modified_files_h">Измененные файлы</h4>
                         <div id="modified-files-list" style="display: flex; flex-direction: column; gap: 8px;"></div>
@@ -1301,6 +1361,12 @@
                 ingest_new_files_h: "Новые файлы в проектах",
                 ingest_modified_files_h: "Измененные файлы",
                 btn_file_import: "Импорт",
+                scan_progress_label: "Сканирую...",
+                scan_dirs_label: "Папок",
+                scan_new_label: "Новых",
+                scan_modified_label: "Изменённых",
+                scan_uptodate_label: "Актуальных",
+
                 
                 settings_title: "Настройки системы",
                 settings_subtitle: "Настройка LLM, директорий и тем оформления",
@@ -1446,6 +1512,12 @@
                 ingest_new_files_h: "New Project Files",
                 ingest_modified_files_h: "Modified Files",
                 btn_file_import: "Import",
+                scan_progress_label: "Scanning...",
+                scan_dirs_label: "Folders",
+                scan_new_label: "New",
+                scan_modified_label: "Modified",
+                scan_uptodate_label: "Up to Date",
+
                 
                 settings_title: "System Settings",
                 settings_subtitle: "Configure LLM provider, folders and visuals",
@@ -1920,75 +1992,161 @@
             }
         }
 
-        // --- Scan Workspace raw directory ---
+        // --- Scan Workspace raw directory (streaming SSE) ---
         let scannedNewFiles = [];
         let scannedModifiedFiles = [];
-        
-        async function scanRawFiles() {
-            const loader = document.getElementById('scan-loader');
-            const btn = document.getElementById('scan-raw-btn');
+
+        function scanRawFiles() {
+            const btn        = document.getElementById('scan-raw-btn');
+            const panel      = document.getElementById('scan-progress-panel');
             const resultsWrapper = document.getElementById('scan-results-wrapper');
-            const ingestAllBtn = document.getElementById('ingest-all-btn');
-            
-            loader.style.display = 'flex';
+            const ingestAllBtn   = document.getElementById('ingest-all-btn');
+            const currentDir = document.getElementById('scan-current-dir');
+            const countDirs  = document.getElementById('scan-count-dirs');
+            const countNew   = document.getElementById('scan-count-new');
+            const countMod   = document.getElementById('scan-count-modified');
+            const newList    = document.getElementById('new-files-list');
+            const modList    = document.getElementById('modified-files-list');
+            const newSec     = document.getElementById('new-files-section');
+            const modSec     = document.getElementById('modified-files-section');
+            const emptyMsg   = document.getElementById('scan-results-empty');
+
+            // Сброс
+            scannedNewFiles = [];
+            scannedModifiedFiles = [];
+            newList.innerHTML = '';
+            modList.innerHTML = '';
+            newSec.style.display = 'none';
+            modSec.style.display = 'none';
+            emptyMsg.style.display = 'none';
             resultsWrapper.style.display = 'none';
             ingestAllBtn.style.display = 'none';
+            countDirs.textContent = '0';
+            countNew.textContent  = '0';
+            countMod.textContent  = '0';
+            currentDir.textContent = '—';
+            // Скрыть итоговую карточку предыдущего запуска
+            const prevSummary = document.getElementById('scan-summary-card');
+            if (prevSummary) prevSummary.style.display = 'none';
+
+            panel.style.display = 'block';
             btn.disabled = true;
-            
-            try {
-                const response = await fetch('/api/scan_raw');
-                const data = await response.json();
-                
-                scannedNewFiles = data.new_files || [];
-                scannedModifiedFiles = data.modified_files || [];
-                
-                loader.style.display = 'none';
-                resultsWrapper.style.display = 'block';
-                
-                const emptyMsg = document.getElementById('scan-results-empty');
-                const newSec = document.getElementById('new-files-section');
-                const modSec = document.getElementById('modified-files-section');
-                const newList = document.getElementById('new-files-list');
-                const modList = document.getElementById('modified-files-list');
-                
-                newList.innerHTML = '';
-                modList.innerHTML = '';
-                
-                if (scannedNewFiles.length === 0 && scannedModifiedFiles.length === 0) {
-                    emptyMsg.style.display = 'block';
-                    newSec.style.display = 'none';
-                    modSec.style.display = 'none';
-                    ingestAllBtn.style.display = 'none';
-                } else {
-                    emptyMsg.style.display = 'none';
-                    ingestAllBtn.style.display = 'block';
-                    
-                    if (scannedNewFiles.length > 0) {
-                        newSec.style.display = 'block';
-                        scannedNewFiles.forEach(file => {
-                            const div = createScanItemElement(file);
-                            newList.appendChild(div);
-                        });
-                    } else {
-                        newSec.style.display = 'none';
-                    }
-                    
-                    if (scannedModifiedFiles.length > 0) {
-                        modSec.style.display = 'block';
-                        scannedModifiedFiles.forEach(file => {
-                            const div = createScanItemElement(file);
-                            modList.appendChild(div);
-                        });
-                    } else {
-                        modSec.style.display = 'none';
-                    }
-                }
-            } catch (e) {
-                showToast(e.message, true);
-                loader.style.display = 'none';
-            } finally {
+
+            const es = new EventSource('/api/scan_raw_stream');
+
+            es.addEventListener('status', e => {
+                const d = JSON.parse(e.data);
+                currentDir.textContent = d.message;
+            });
+
+            es.addEventListener('progress', e => {
+                const d = JSON.parse(e.data);
+                currentDir.textContent = d.dir;
+                countDirs.textContent  = d.dirs_scanned;
+                countNew.textContent   = d.new;
+                countMod.textContent   = d.modified;
+            });
+
+            es.addEventListener('found_new', e => {
+                const file = JSON.parse(e.data);
+                scannedNewFiles.push(file);
+                countNew.textContent = scannedNewFiles.length;
+                // Показываем секцию и добавляем файл сразу
+                if (resultsWrapper.style.display === 'none') resultsWrapper.style.display = 'block';
+                newSec.style.display = 'block';
+                const el = createScanItemElement(file);
+                el.style.opacity = '0';
+                el.style.transform = 'translateY(-6px)';
+                el.style.transition = 'opacity 0.25s, transform 0.25s';
+                newList.appendChild(el);
+                requestAnimationFrame(() => { el.style.opacity = '1'; el.style.transform = 'none'; });
+            });
+
+            es.addEventListener('found_modified', e => {
+                const file = JSON.parse(e.data);
+                scannedModifiedFiles.push(file);
+                countMod.textContent = scannedModifiedFiles.length;
+                if (resultsWrapper.style.display === 'none') resultsWrapper.style.display = 'block';
+                modSec.style.display = 'block';
+                const el = createScanItemElement(file);
+                el.style.opacity = '0';
+                el.style.transform = 'translateY(-6px)';
+                el.style.transition = 'opacity 0.25s, transform 0.25s';
+                modList.appendChild(el);
+                requestAnimationFrame(() => { el.style.opacity = '1'; el.style.transform = 'none'; });
+            });
+
+            es.addEventListener('error', e => {
+                try {
+                    const d = JSON.parse(e.data);
+                    showToast(d.message, true);
+                } catch(_) {}
+            });
+
+            es.addEventListener('done', e => {
+                const d = JSON.parse(e.data);
+                es.close();
+                panel.style.display = 'none';
                 btn.disabled = false;
-            }
+
+                // Заполняем итоговую карточку
+                const summaryCard    = document.getElementById('scan-summary-card');
+                const summaryTitle   = document.getElementById('scan-summary-title');
+                const summaryTime    = document.getElementById('scan-summary-time');
+                const summaryDirs    = document.getElementById('summary-dirs');
+                const summaryNew     = document.getElementById('summary-new');
+                const summaryMod     = document.getElementById('summary-modified');
+                const summaryUpToDate = document.getElementById('summary-uptodate');
+
+                const dirsCount = d.dirs_scanned || 0;
+                const newCount  = scannedNewFiles.length;
+                const modCount  = scannedModifiedFiles.length;
+                const upToDate  = Math.max(0, dirsCount - newCount - modCount);
+                const now       = new Date();
+                const timeStr   = now.toLocaleTimeString(currentLang === 'ru' ? 'ru-RU' : 'en-US',
+                                  { hour: '2-digit', minute: '2-digit', second: '2-digit' });
+
+                summaryTitle.textContent = currentLang === 'ru'
+                    ? 'Сканирование завершено'
+                    : 'Scan complete';
+                summaryTime.textContent = currentLang === 'ru'
+                    ? `Завершено в ${timeStr} · проверено ${dirsCount} папок`
+                    : `Finished at ${timeStr} · ${dirsCount} folders checked`;
+
+                summaryDirs.textContent    = dirsCount;
+                summaryNew.textContent     = newCount;
+                summaryMod.textContent     = modCount;
+                summaryUpToDate.textContent = upToDate;
+
+                // Цвет рамки: зелёный если нашли, нейтральный если всё чисто
+                summaryCard.style.borderColor = (newCount + modCount > 0)
+                    ? 'var(--success)' : 'var(--border)';
+
+                // Показываем карточку с анимацией
+                summaryCard.style.opacity = '0';
+                summaryCard.style.transform = 'translateY(-8px)';
+                summaryCard.style.transition = 'opacity 0.3s, transform 0.3s';
+                summaryCard.style.display = 'block';
+                requestAnimationFrame(() => {
+                    summaryCard.style.opacity = '1';
+                    summaryCard.style.transform = 'none';
+                });
+
+                // Финальный результат: пустой список
+                if (newCount === 0 && modCount === 0) {
+                    resultsWrapper.style.display = 'block';
+                    emptyMsg.style.display = 'block';
+                } else {
+                    ingestAllBtn.style.display = 'block';
+                }
+            });
+
+            es.onerror = () => {
+                es.close();
+                panel.style.display = 'none';
+                btn.disabled = false;
+                showToast(currentLang === 'ru' ? 'Ошибка подключения к серверу' : 'Server connection error', true);
+            };
         }
         
         function createScanItemElement(file) {
@@ -2044,35 +2202,172 @@
         async function ingestAllScanned() {
             const allFiles = [...scannedNewFiles, ...scannedModifiedFiles];
             if (allFiles.length === 0) return;
-            
-            const btn = document.getElementById('ingest-all-btn');
+
+            const btn     = document.getElementById('ingest-all-btn');
             const scanBtn = document.getElementById('scan-raw-btn');
-            btn.disabled = true;
+            btn.disabled  = true;
             scanBtn.disabled = true;
-            
-            showToast(currentLang === 'ru' ? `Начат импорт ${allFiles.length} файлов...` : `Starting ingest of ${allFiles.length} files...`);
-            
+
+            // --- Панель прогресса пакетного импорта ---
+            let ingestPanel = document.getElementById('ingest-batch-panel');
+            if (!ingestPanel) {
+                ingestPanel = document.createElement('div');
+                ingestPanel.id = 'ingest-batch-panel';
+                ingestPanel.style.cssText = 'border:1px solid var(--border);border-radius:10px;background:var(--bg);padding:18px;margin-bottom:12px;';
+                btn.closest('.glass-panel').insertBefore(ingestPanel, btn.closest('.glass-panel').querySelector('#scan-results-wrapper'));
+            }
+
+            let isPaused = false;
+            let isStopped = false;
+            let doneCount = 0, errCount = 0;
+            const startTime = Date.now();
+
+            const renderPanel = (thermalInfo, currentFile, idx) => {
+                const tlabels = { cool: '🟢 Холодно', warm: '🟡 Тепло', hot: '🟠 Горячо', critical: '🔴 Критично' };
+                const tlabelsEn = { cool: '🟢 Cool', warm: '🟡 Warm', hot: '🟠 Hot', critical: '🔴 Critical' };
+                const tmap = currentLang === 'ru' ? tlabels : tlabelsEn;
+                const tl = thermalInfo ? tmap[thermalInfo.label] || '🟢' : '🟢';
+                const idle = thermalInfo ? thermalInfo.cpu_idle.toFixed(0) : '—';
+                const pause = thermalInfo ? (thermalInfo.pause_ms / 1000).toFixed(0) : '0';
+
+                ingestPanel.innerHTML = `
+                    <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:12px;">
+                        <div style="display:flex;align-items:center;gap:10px;">
+                            ${isPaused
+                                ? '<div style="width:12px;height:12px;border-radius:50%;background:var(--accent);"></div>'
+                                : '<div class="spinner" style="flex-shrink:0;"></div>'}
+                            <span style="font-size:13px;font-weight:600;color:var(--text);">
+                                ${currentLang === 'ru'
+                                    ? `Импорт ${idx+1} из ${allFiles.length}`
+                                    : `Importing ${idx+1} of ${allFiles.length}`}
+                            </span>
+                        </div>
+                        <div style="display:flex;gap:8px;">
+                            <button onclick="window._ingestPause()" style="padding:4px 10px;font-size:11px;border-radius:6px;border:1px solid var(--border);background:var(--bg);color:var(--text);cursor:pointer;">
+                                ${isPaused ? (currentLang==='ru'?'▶ Продолжить':'▶ Resume') : (currentLang==='ru'?'⏸ Пауза':'⏸ Pause')}
+                            </button>
+                            <button onclick="window._ingestStop()" style="padding:4px 10px;font-size:11px;border-radius:6px;border:1px solid #e55;background:transparent;color:#e55;cursor:pointer;">
+                                ${currentLang==='ru'?'✕ Стоп':'✕ Stop'}
+                            </button>
+                        </div>
+                    </div>
+                    <div style="height:4px;background:var(--border);border-radius:4px;overflow:hidden;margin-bottom:12px;">
+                        <div style="height:100%;width:${((idx+1)/allFiles.length*100).toFixed(1)}%;background:linear-gradient(90deg,var(--accent),var(--success));border-radius:4px;transition:width 0.4s;"></div>
+                    </div>
+                    <div style="display:flex;gap:16px;align-items:center;flex-wrap:wrap;margin-bottom:10px;">
+                        <div style="font-size:11px;color:var(--text-muted);font-family:monospace;flex:1;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">
+                            ${currentFile || ''}
+                        </div>
+                        <div style="font-size:11px;padding:2px 8px;border-radius:12px;background:var(--bg);border:1px solid var(--border);white-space:nowrap;">
+                            ${tl} &nbsp;CPU idle: ${idle}% &nbsp;·&nbsp; ${currentLang==='ru'?'Пауза':'Pause'}: ${pause}s
+                        </div>
+                    </div>
+                    <div style="display:flex;gap:20px;">
+                        <div style="font-size:12px;color:var(--success);">✓ ${currentLang==='ru'?'Готово':'Done'}: ${doneCount}</div>
+                        <div style="font-size:12px;color:#e55;">✗ ${currentLang==='ru'?'Ошибок':'Errors'}: ${errCount}</div>
+                        <div style="font-size:12px;color:var(--text-muted);">${currentLang==='ru'?'Осталось':'Left'}: ${allFiles.length - idx - 1}</div>
+                    </div>
+                    ${isPaused ? `<div style="margin-top:10px;padding:8px 12px;border-radius:8px;background:#ffa5001a;border:1px solid #ffa500;font-size:12px;color:#ffa500;">
+                        ${currentLang==='ru'?'⏸ Импорт приостановлен. Нажмите «Продолжить» для возобновления.':'⏸ Import paused. Click Resume to continue.'}
+                    </div>` : ''}
+                `;
+            };
+
+            // Управление паузой/остановкой
+            window._ingestPause = () => { isPaused = !isPaused; };
+            window._ingestStop  = () => { isStopped = true; isPaused = false; };
+
+            const sleep = ms => new Promise(r => setTimeout(r, ms));
+            const waitIfPaused = async () => {
+                while (isPaused && !isStopped) await sleep(300);
+            };
+
+            // Основной цикл
             for (let i = 0; i < allFiles.length; i++) {
+                if (isStopped) break;
+                await waitIfPaused();
+                if (isStopped) break;
+
                 const file = allFiles[i];
-                btn.innerText = (currentLang === 'ru' ? 'Импорт ' : 'Importing ') + (i + 1) + '/' + allFiles.length;
-                
+
+                // 1. Проверяем тепловое давление
+                let thermalInfo = null;
                 try {
-                    await fetch('/api/ingest', {
+                    const tr = await fetch('/api/thermal');
+                    thermalInfo = await tr.json();
+                } catch (_) {}
+
+                // 2. Обновляем панель
+                renderPanel(thermalInfo, file.rel_path, i);
+
+                // 3. Адаптивная пауза (если система горячая)
+                if (thermalInfo && thermalInfo.pause_ms > 0) {
+                    const pauseSec = thermalInfo.pause_ms / 1000;
+                    // Обратный отсчёт в панели
+                    for (let s = pauseSec; s > 0; s--) {
+                        if (isStopped || !isPaused && thermalInfo.pause_ms === 0) break;
+                        ingestPanel.querySelector('[style*="CPU idle"]').textContent =
+                            `${currentLang==='ru'?'🌡 Охлаждаюсь':'🌡 Cooling'} ${s}s — CPU idle: ${thermalInfo.cpu_idle.toFixed(0)}% · ${thermalInfo.label}`;
+                        await sleep(1000);
+                        if (isStopped) break;
+                    }
+                }
+
+                if (isStopped) break;
+                await waitIfPaused();
+
+                // 4. Выполняем импорт
+                try {
+                    const resp = await fetch('/api/ingest', {
                         method: 'POST',
                         headers: { 'Content-Type': 'application/json' },
                         body: JSON.stringify({ filename: file.rel_path })
                     });
+                    const data = await resp.json();
+                    if (data.success) doneCount++; else errCount++;
                 } catch (e) {
-                    console.error("Batch ingest error for file " + file.rel_path, e);
+                    errCount++;
+                    console.error('Ingest error:', file.rel_path, e);
                 }
             }
-            
-            showToast(currentLang === 'ru' ? 'Пакетный импорт завершен!' : 'Batch ingestion completed!');
-            btn.innerText = translations[currentLang].btn_ingest_all || 'Импортировать все найденные';
-            btn.disabled = false;
+
+            // Финальная карточка
+            const elapsed = ((Date.now() - startTime) / 1000).toFixed(0);
+            ingestPanel.innerHTML = `
+                <div style="display:flex;align-items:center;gap:12px;">
+                    <div style="width:32px;height:32px;border-radius:50%;background:${isStopped?'var(--accent)':'var(--success)'};display:flex;align-items:center;justify-content:center;font-size:16px;flex-shrink:0;">
+                        ${isStopped ? '⏹' : '✓'}
+                    </div>
+                    <div>
+                        <div style="font-size:14px;font-weight:700;color:var(--text);">
+                            ${isStopped
+                                ? (currentLang==='ru' ? 'Импорт остановлен' : 'Import stopped')
+                                : (currentLang==='ru' ? 'Импорт завершён' : 'Import complete')}
+                        </div>
+                        <div style="font-size:11px;color:var(--text-muted);margin-top:2px;">
+                            ${currentLang==='ru' ? `Время: ${elapsed}с` : `Time: ${elapsed}s`}
+                        </div>
+                    </div>
+                </div>
+                <div style="display:flex;gap:0;border:1px solid var(--border);border-radius:8px;overflow:hidden;margin-top:14px;">
+                    <div style="flex:1;text-align:center;padding:12px 8px;border-right:1px solid var(--border);">
+                        <div style="font-size:22px;font-weight:700;color:var(--text);">${allFiles.length}</div>
+                        <div style="font-size:11px;color:var(--text-muted);text-transform:uppercase;letter-spacing:0.5px;">${currentLang==='ru'?'Файлов':'Files'}</div>
+                    </div>
+                    <div style="flex:1;text-align:center;padding:12px 8px;border-right:1px solid var(--border);">
+                        <div style="font-size:22px;font-weight:700;color:var(--success);">${doneCount}</div>
+                        <div style="font-size:11px;color:var(--text-muted);text-transform:uppercase;letter-spacing:0.5px;">${currentLang==='ru'?'Успешно':'Success'}</div>
+                    </div>
+                    <div style="flex:1;text-align:center;padding:12px 8px;">
+                        <div style="font-size:22px;font-weight:700;color:${errCount>0?'#e55':'var(--text-muted)'};">${errCount}</div>
+                        <div style="font-size:11px;color:var(--text-muted);text-transform:uppercase;letter-spacing:0.5px;">${currentLang==='ru'?'Ошибок':'Errors'}</div>
+                    </div>
+                </div>
+            `;
+
+            btn.disabled  = false;
             scanBtn.disabled = false;
-            
-            scanRawFiles();
+            btn.innerText = translations[currentLang]?.btn_ingest_all || 'Импортировать все найденные';
             loadIngestLogs();
         }
 

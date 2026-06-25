@@ -261,59 +261,133 @@ class MemexDashboardHandler(BaseHTTPRequestHandler):
             self.wfile.write(json.dumps({"report": report}, ensure_ascii=False).encode("utf-8"))
             return
 
-        # 5a. API: Сканирование папки raw для поиска новых и измененных файлов
+        # 5a. API: Сканирование папки raw (стриминг SSE с прогрессом)
+        if path == "/api/scan_raw_stream":
+            tools.load_config()
+            raw_dir = tools.raw_dir
+            wiki_dir = tools.wiki_dir
+            exclude = tools.config.get("exclude_patterns", [])
+
+            self.send_response(200)
+            self.send_header("Content-Type", "text/event-stream")
+            self.send_header("Cache-Control", "no-cache")
+            self.send_header("Access-Control-Allow-Origin", "*")
+            self.send_header("Connection", "keep-alive")
+            self.end_headers()
+
+            def sse(event, payload):
+                """Отправить SSE-событие клиенту."""
+                data = json.dumps(payload, ensure_ascii=False)
+                msg = f"event: {event}\ndata: {data}\n\n"
+                try:
+                    self.wfile.write(msg.encode("utf-8"))
+                    self.wfile.flush()
+                except Exception:
+                    pass
+
+            ALLOWED_EXT = {".txt", ".md", ".py", ".js", ".sh", ".yaml", ".json",
+                           ".docx", ".pdf", ".html", ".css", ".go", ".rs", ".cpp", ".h"}
+
+            new_files = []
+            modified_files = []
+
+            if not raw_dir or not os.path.exists(raw_dir):
+                sse("error", {"message": "raw_folder_path не настроен или папка не существует"})
+                sse("done", {"new_files": [], "modified_files": []})
+                return
+
+            # Шаг 1: собираем wiki-файлы для сверки
+            sse("status", {"message": "Читаю индекс wiki...", "new": 0, "modified": 0})
+            wiki_files = {}
+            if os.path.exists(wiki_dir):
+                for root, dirs, files in os.walk(wiki_dir):
+                    for f in files:
+                        if f.endswith(".md"):
+                            wiki_files[f[:-3].lower()] = os.path.getmtime(os.path.join(root, f))
+
+            # Шаг 2: сканируем raw folder со стримингом
+            dirs_scanned = 0
+            for root, dirs, files in os.walk(raw_dir):
+                dirs[:] = [d for d in dirs if not should_exclude(os.path.join(root, d), exclude)]
+                rel_dir = os.path.relpath(root, raw_dir)
+                dirs_scanned += 1
+
+                # Каждые несколько папок шлём обновление статуса
+                if dirs_scanned % 3 == 1 or dirs_scanned == 1:
+                    display_dir = rel_dir if rel_dir != "." else os.path.basename(raw_dir)
+                    sse("progress", {
+                        "dir": display_dir,
+                        "new": len(new_files),
+                        "modified": len(modified_files),
+                        "dirs_scanned": dirs_scanned
+                    })
+
+                for f in files:
+                    filepath = os.path.join(root, f)
+                    rel_path = os.path.relpath(filepath, raw_dir)
+
+                    if should_exclude(rel_path, exclude):
+                        continue
+
+                    ext = os.path.splitext(f)[1].lower()
+                    if ext not in ALLOWED_EXT:
+                        continue
+
+                    basename_no_ext = os.path.splitext(f)[0]
+                    normalized_id = tools.normalize_concept_name(basename_no_ext)
+                    raw_mtime = os.path.getmtime(filepath)
+
+                    if normalized_id not in wiki_files:
+                        info = {"rel_path": rel_path, "name": f, "size": os.path.getsize(filepath)}
+                        new_files.append(info)
+                        sse("found_new", info)
+                    elif raw_mtime > wiki_files[normalized_id] + 5:
+                        info = {"rel_path": rel_path, "name": f, "size": os.path.getsize(filepath)}
+                        modified_files.append(info)
+                        sse("found_modified", info)
+
+            sse("done", {"new_files": new_files, "modified_files": modified_files,
+                         "dirs_scanned": dirs_scanned})
+            return
+
+        # 5a-legacy. API: Сканирование папки raw (обычный JSON, оставлен для совместимости)
         if path == "/api/scan_raw":
             tools.load_config()
             raw_dir = tools.raw_dir
             wiki_dir = tools.wiki_dir
             exclude = tools.config.get("exclude_patterns", [])
-            
+
             new_files = []
             modified_files = []
-            
+
+            ALLOWED_EXT = {".txt", ".md", ".py", ".js", ".sh", ".yaml", ".json",
+                           ".docx", ".pdf", ".html", ".css", ".go", ".rs", ".cpp", ".h"}
+
             if os.path.exists(raw_dir):
-                # Находим все файлы в wiki/ для сверки
                 wiki_files = {}
                 for root, dirs, files in os.walk(wiki_dir):
                     for f in files:
                         if f.endswith(".md"):
                             wiki_files[f[:-3].lower()] = os.path.getmtime(os.path.join(root, f))
-                            
-                # Сканируем raw folder
+
                 for root, dirs, files in os.walk(raw_dir):
-                    # Отфильтруем dirs, чтобы walk не шел в исключения
                     dirs[:] = [d for d in dirs if not should_exclude(os.path.join(root, d), exclude)]
-                    
                     for f in files:
                         filepath = os.path.join(root, f)
                         rel_path = os.path.relpath(filepath, raw_dir)
-                        
                         if should_exclude(rel_path, exclude):
                             continue
-                            
-                        # Интересуют только текстовые / программные файлы
                         ext = os.path.splitext(f)[1].lower()
-                        if ext not in [".txt", ".md", ".py", ".js", ".sh", ".yaml", ".json", ".docx", ".pdf", ".html", ".css", ".go", ".rs", ".cpp", ".h"]:
+                        if ext not in ALLOWED_EXT:
                             continue
-                            
                         basename_no_ext = os.path.splitext(f)[0]
                         normalized_id = tools.normalize_concept_name(basename_no_ext)
-                        
                         raw_mtime = os.path.getmtime(filepath)
-                        
                         if normalized_id not in wiki_files:
-                            new_files.append({
-                                "rel_path": rel_path,
-                                "name": f,
-                                "size": os.path.getsize(filepath)
-                            })
+                            new_files.append({"rel_path": rel_path, "name": f, "size": os.path.getsize(filepath)})
                         elif raw_mtime > wiki_files[normalized_id] + 5:
-                            modified_files.append({
-                                "rel_path": rel_path,
-                                "name": f,
-                                "size": os.path.getsize(filepath)
-                            })
-            
+                            modified_files.append({"rel_path": rel_path, "name": f, "size": os.path.getsize(filepath)})
+
             self._set_headers(200)
             self.wfile.write(json.dumps({"new_files": new_files, "modified_files": modified_files}, ensure_ascii=False).encode("utf-8"))
             return
@@ -334,6 +408,53 @@ class MemexDashboardHandler(BaseHTTPRequestHandler):
             self._set_headers(200)
             self.wfile.write(json.dumps(status_copy, ensure_ascii=False).encode("utf-8"))
             return
+
+        # 5c. API: Тепловой статус системы (без sudo)
+        if path == "/api/thermal":
+            import multiprocessing, subprocess as sp, re as _re
+            result = {"level": 0, "label": "cool", "cpu_idle": 100.0,
+                      "load_per_core": 0.0, "pause_ms": 0}
+            try:
+                cpus = multiprocessing.cpu_count()
+                load1, _, _ = os.getloadavg()
+                load_per_core = load1 / max(cpus, 1)
+
+                # Получаем CPU idle% через top (без sudo, ~0.3 сек)
+                top_out = sp.run(
+                    ["top", "-l", "1", "-n", "0"],
+                    capture_output=True, text=True, timeout=4
+                ).stdout
+                idle_match = _re.search(r"(\d+\.\d+)%\s+idle", top_out)
+                cpu_idle = float(idle_match.group(1)) if idle_match else 100.0
+
+                # Уровни теплового давления:
+                # 0 COOL   — idle > 60%  или load/core < 0.5  → пауза 0 сек
+                # 1 WARM   — idle 40-60% или load/core 0.5-0.8 → пауза 2 сек
+                # 2 HOT    — idle 20-40% или load/core 0.8-1.2 → пауза 6 сек
+                # 3 CRITICAL — idle < 20% или load/core > 1.2  → пауза 15 сек
+                if cpu_idle < 20 or load_per_core > 1.2:
+                    level, label, pause_ms = 3, "critical", 15000
+                elif cpu_idle < 40 or load_per_core > 0.8:
+                    level, label, pause_ms = 2, "hot", 6000
+                elif cpu_idle < 60 or load_per_core > 0.5:
+                    level, label, pause_ms = 1, "warm", 2000
+                else:
+                    level, label, pause_ms = 0, "cool", 0
+
+                result = {
+                    "level": level,
+                    "label": label,
+                    "cpu_idle": round(cpu_idle, 1),
+                    "load_per_core": round(load_per_core, 2),
+                    "pause_ms": pause_ms
+                }
+            except Exception as e:
+                logger.warning(f"Не удалось получить тепловой статус: {e}")
+
+            self._set_headers(200)
+            self.wfile.write(json.dumps(result, ensure_ascii=False).encode("utf-8"))
+            return
+
 
         # 6. API: Получение логов импорта
         if path == "/api/logs":

@@ -275,6 +275,11 @@ class MemexTools:
         except Exception as e:
             return f"Ошибка при чтении файла {filename}: {e}"
             
+        # Ограничиваем размер контента до 15 000 символов во избежание перегрева LLM
+        max_chars = 15000
+        if len(content) > max_chars:
+            content = content[:10000] + f"\n\n... [Текст обрезан во избежание перегрева, исходный размер {len(content)} символов] ...\n\n" + content[-5000:]
+            
         basename = os.path.basename(filepath)
         source_id = self.normalize_concept_name(os.path.splitext(basename)[0])
         

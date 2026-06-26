@@ -9,11 +9,11 @@ import urllib.parse
 import threading
 
 pull_status = {"status": "idle", "progress": 0, "error": None, "model": ""}
-pull_status_lock = threading.Lock()
+pull_status_lock = threading.RLock()
 
 # ── Тихая (фоновая) индексация ───────────────────────────────────────────────
 # Состояние разделяется между потоком и HTTP-обработчиками через dict + Lock.
-_quiet_lock = threading.Lock()
+_quiet_lock = threading.RLock()
 _quiet_state = {
     "running":  False,
     "stopped":  False,
@@ -116,10 +116,13 @@ def quiet_ingest_worker():
                 with _quiet_lock:
                     if ok:
                         _quiet_state["done"] += 1
-                        _log(f"  ✓ Готово: {rel_path}")
                     else:
                         _quiet_state["errors"] += 1
-                        _log(f"  ✗ Ошибка LLM: {result[:120]}")
+                
+                if ok:
+                    _log(f"  ✓ Готово: {rel_path}")
+                else:
+                    _log(f"  ✗ Ошибка LLM: {result[:120]}")
             except Exception as e:
                 tb = traceback.format_exc(limit=3)
                 with _quiet_lock:

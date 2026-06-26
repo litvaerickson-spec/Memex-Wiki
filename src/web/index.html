@@ -1688,6 +1688,19 @@
                 const pageId = `page-${item.dataset.page}`;
                 document.getElementById(pageId).classList.add('active');
 
+                // Если уходим с вкладки графа — приостанавливаем его анимацию и освобождаем WebGL ресурсы
+                if (item.dataset.page !== 'graph') {
+                    if (graphInstance) {
+                        try {
+                            graphInstance.pauseAnimation();
+                            const renderer = graphInstance.renderer();
+                            if (renderer) renderer.dispose();
+                        } catch(e) {
+                            console.warn("Ошибка при приостановке анимации графа:", e);
+                        }
+                    }
+                }
+
                 if (item.dataset.page === 'graph') {
                     loadGraph();
                 } else if (item.dataset.page === 'ingest') {
@@ -2773,8 +2786,13 @@
             isAnimationStarted = true;
 
             function tick() {
+                const graphPage = document.getElementById('page-graph');
+                if (!graphPage || !graphPage.classList.contains('active')) {
+                    isAnimationStarted = false;
+                    return;
+                }
+
                 try {
-                    requestAnimationFrame(tick);
                     if (!graphInstance) return;
                     const camera = graphInstance.camera();
                     if (!camera) return;
@@ -2795,12 +2813,24 @@
                 } catch (err) {
                     console.error("Ошибка в цикле анимации графа:", err);
                 }
+
+                if (isAnimationStarted) {
+                    requestAnimationFrame(tick);
+                }
             }
             tick();
         }
         let _graphOrbitDist = 500;
 
         async function loadGraph() {
+            if (graphInstance) {
+                try {
+                    graphInstance.pauseAnimation();
+                    const renderer = graphInstance.renderer();
+                    if (renderer) renderer.dispose();
+                } catch(e) {}
+                graphInstance = null;
+            }
             const canvas = document.getElementById('3d-graph-canvas');
             canvas.innerHTML = `<div style="color: var(--text-muted); padding: 40px; font-size: 13px;">${currentLang === 'ru' ? 'Загрузка 3D графа знаний...' : 'Loading 3D knowledge graph...'}</div>`;
             
@@ -3026,7 +3056,7 @@
                     headers: { 'Content-Type': 'application/json' },
                     body: JSON.stringify({
                         files:     allFiles.map(f => f.rel_path),
-                        delay_sec: 30       // 30 сек пауза между файлами
+                        delay_sec: 10       // 10 сек пауза между файлами (было 30)
                     })
                 });
                 const data = await resp.json();

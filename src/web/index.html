@@ -833,10 +833,39 @@
                 <div style="font-size: 12.5px; color: var(--text-muted); margin-bottom: 16px;" data-i18n="ingest_scan_desc">
                     Сканирует подключенную рабочую папку на предмет новых или обновленных файлов проектов, которые еще не перенесены в Obsidian.
                 </div>
-                <div style="display: flex; gap: 12px; margin-bottom: 20px;">
+                <div style="display: flex; gap: 12px; margin-bottom: 20px; flex-wrap: wrap;">
                     <button class="btn" id="scan-raw-btn" onclick="scanRawFiles()" data-i18n="btn_scan_projects">Сканировать проекты</button>
                     <button class="btn btn-secondary" id="ingest-all-btn" onclick="ingestAllScanned()" style="display: none;" data-i18n="btn_ingest_all">Импортировать все найденные</button>
+                    <button class="btn btn-secondary" id="ingest-quiet-btn" onclick="startQuietIngest()" style="display: none; border-color: #6366f1; color: #6366f1;">
+                        🌙 Тихая индексация
+                    </button>
                 </div>
+
+                <!-- Панель тихой индексации (появляется пока процесс активен) -->
+                <div id="quiet-ingest-panel" style="display:none; border:1px solid #6366f1; border-radius:10px; background:var(--bg); padding:16px; margin-bottom:14px;">
+                    <div style="display:flex; align-items:center; justify-content:space-between; margin-bottom:10px;">
+                        <div style="display:flex; align-items:center; gap:10px;">
+                            <span style="font-size:18px;">🌙</span>
+                            <span style="font-size:13px; font-weight:600; color:#6366f1;" id="quiet-title">Тихая индексация</span>
+                        </div>
+                        <button id="quiet-stop-btn" onclick="stopQuietIngest()"
+                            style="padding:4px 12px; font-size:11px; border-radius:6px; border:1px solid #e55; background:transparent; color:#e55; cursor:pointer;">
+                            ✕ Стоп
+                        </button>
+                    </div>
+                    <div style="height:4px; background:var(--border); border-radius:4px; overflow:hidden; margin-bottom:10px;">
+                        <div id="quiet-bar" style="height:100%; width:0%; background:linear-gradient(90deg,#6366f1,#a78bfa); border-radius:4px; transition:width 0.6s;"></div>
+                    </div>
+                    <div style="display:flex; gap:20px; font-size:12px; margin-bottom:8px;">
+                        <span style="color:var(--success);">✓ <span id="quiet-done">0</span></span>
+                        <span style="color:#e55;">✗ <span id="quiet-err">0</span></span>
+                        <span style="color:var(--text-muted);">📋 <span id="quiet-total">0</span> всего</span>
+                        <span style="color:var(--text-muted);">⏱ ETA: <span id="quiet-eta">—</span></span>
+                    </div>
+                    <div id="quiet-current" style="font-size:11px; color:var(--text-muted); font-family:monospace; margin-bottom:8px; white-space:nowrap; overflow:hidden; text-overflow:ellipsis;"></div>
+                    <div id="quiet-log" style="font-size:10px; font-family:monospace; color:var(--text-muted); max-height:80px; overflow-y:auto; background:var(--overlay-bg); border-radius:6px; padding:6px 8px; line-height:1.6;"></div>
+                </div>
+
 
                 <!-- Scan summary card (shown after scan completes) -->
                 <div id="scan-summary-card" style="display: none; border: 1px solid var(--success); border-radius: 10px; background: var(--bg); padding: 20px; margin-bottom: 12px;">
@@ -2138,7 +2167,9 @@
                     emptyMsg.style.display = 'block';
                 } else {
                     ingestAllBtn.style.display = 'block';
+                    document.getElementById('ingest-quiet-btn').style.display = 'block';
                 }
+
             });
 
             es.onerror = () => {
@@ -2972,7 +3003,121 @@
 
             loadConfig();
             loadGraph();
+
+            // Проверяем при загрузке — вдруг тихая индексация уже идёт (сервер перезапустился)
+            pollQuietStatus();
         });
+
+        // ── Тихая индексация ─────────────────────────────────────────────────
+
+        let _quietPollTimer = null;
+
+        async function startQuietIngest() {
+            const allFiles = [...scannedNewFiles, ...scannedModifiedFiles];
+            if (allFiles.length === 0) return;
+
+            const btn = document.getElementById('ingest-quiet-btn');
+            btn.disabled = true;
+            btn.textContent = '🌙 Запускаю...';
+
+            try {
+                const resp = await fetch('/api/ingest_quiet_start', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({
+                        files:     allFiles.map(f => f.rel_path),
+                        delay_sec: 30       // 30 сек пауза между файлами
+                    })
+                });
+                const data = await resp.json();
+                if (data.ok) {
+                    document.getElementById('ingest-all-btn').style.display = 'none';
+                    btn.style.display = 'none';
+                    document.getElementById('quiet-ingest-panel').style.display = 'block';
+                    pollQuietStatus();
+                } else {
+                    btn.disabled = false;
+                    btn.textContent = '🌙 Тихая индексация';
+                    showToast(data.error || 'Ошибка запуска', true);
+                }
+            } catch(e) {
+                btn.disabled = false;
+                btn.textContent = '🌙 Тихая индексация';
+                showToast('Ошибка соединения с сервером', true);
+            }
+        }
+
+        async function stopQuietIngest() {
+            try {
+                await fetch('/api/ingest_quiet_stop', { method: 'POST',
+                    headers: { 'Content-Type': 'application/json' }, body: '{}' });
+            } catch(_) {}
+            clearTimeout(_quietPollTimer);
+            document.getElementById('quiet-ingest-panel').style.display = 'none';
+        }
+
+        async function pollQuietStatus() {
+            clearTimeout(_quietPollTimer);
+            try {
+                const resp = await fetch('/api/ingest_quiet_status');
+                const s = await resp.json();
+                updateQuietPanel(s);
+
+                // Продолжаем поллинг если процесс активен
+                if (s.running) {
+                    _quietPollTimer = setTimeout(pollQuietStatus, 10000);
+                }
+            } catch(_) {}
+        }
+
+        function updateQuietPanel(s) {
+            const panel = document.getElementById('quiet-ingest-panel');
+            if (!s.running && s.total === 0) {
+                panel.style.display = 'none';
+                return;
+            }
+            panel.style.display = 'block';
+
+            const pct = s.total > 0 ? ((s.done + s.errors) / s.total * 100).toFixed(1) : 0;
+            document.getElementById('quiet-bar').style.width   = pct + '%';
+            document.getElementById('quiet-done').textContent  = s.done;
+            document.getElementById('quiet-err').textContent   = s.errors;
+            document.getElementById('quiet-total').textContent = s.total;
+
+            // ETA
+            const etaMin = Math.ceil(s.eta_sec / 60);
+            document.getElementById('quiet-eta').textContent =
+                s.eta_sec > 0 ? `~${etaMin} мин` : (s.running ? '...' : 'завершено');
+
+            // Текущий файл
+            const cur = document.getElementById('quiet-current');
+            if (s.current) {
+                cur.textContent = `⏳ ${s.current}`;
+            } else if (!s.running) {
+                cur.textContent = s.stopped ? '🛑 Остановлено' : '✅ Завершено';
+            }
+
+            // Заголовок
+            const title = document.getElementById('quiet-title');
+            if (!s.running) {
+                title.textContent = `🌙 Тихая индексация — ${s.stopped ? 'остановлена' : 'завершена'}`;
+                document.getElementById('quiet-stop-btn').textContent = '✕ Закрыть';
+                document.getElementById('quiet-stop-btn').onclick = () => {
+                    panel.style.display = 'none';
+                };
+            } else {
+                title.textContent = `🌙 Тихая индексация — ${pct}%`;
+            }
+
+            // Лог
+            const logEl = document.getElementById('quiet-log');
+            if (s.log && s.log.length > 0) {
+                logEl.innerHTML = s.log.slice(-20).map(l =>
+                    `<div>${l.replace(/</g,'&lt;')}</div>`).join('');
+                logEl.scrollTop = logEl.scrollHeight;
+            }
+        }
     </script>
 </body>
+
 </html>

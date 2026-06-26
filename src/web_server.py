@@ -11,6 +11,135 @@ import threading
 pull_status = {"status": "idle", "progress": 0, "error": None, "model": ""}
 pull_status_lock = threading.Lock()
 
+# ── Тихая (фоновая) индексация ───────────────────────────────────────────────
+# Состояние разделяется между потоком и HTTP-обработчиками через dict + Lock.
+_quiet_lock = threading.Lock()
+_quiet_state = {
+    "running":  False,
+    "stopped":  False,
+    "total":    0,
+    "done":     0,
+    "errors":   0,
+    "current":  "",
+    "queue":    [],          # список rel_path файлов
+    "log":      [],          # последние N строк лога
+    "eta_sec":  0,
+    "delay_sec": 30,         # пауза между файлами (сек)
+}
+
+def _quiet_get_cpu_idle():
+    """Два замера top, возвращает CPU idle% за последнюю секунду."""
+    import subprocess as _sp, re as _re
+    try:
+        out = _sp.run(["top", "-l", "2", "-n", "0", "-s", "1"],
+                      capture_output=True, text=True, timeout=6).stdout
+        matches = _re.findall(r"(\d+\.\d+)%\s+idle", out)
+        if len(matches) >= 2:
+            return float(matches[-1])
+        if matches:
+            return float(matches[0])
+    except Exception:
+        pass
+    return 100.0
+
+
+def quiet_ingest_worker():
+    """Фоновый поток тихой индексации.
+
+    Принципы:
+    - os.nice(19) — минимальный приоритет CPU.
+    - Пауза DELAY_SEC между файлами (по умолчанию 30 сек).
+    - Перед каждым файлом проверяет CPU idle:
+      если < 70% — ждёт дополнительно до 60 сек, переопрашивая каждые 10 сек.
+    - Никогда не держит открытое HTTP-соединение.
+    """
+    import time
+    global _quiet_state
+
+    # Опускаем приоритет процесса до минимума
+    try:
+        os.nice(19)
+    except Exception:
+        pass
+
+    COOL_THRESHOLD = 70   # % CPU idle — «достаточно холодно»
+    MAX_THERMAL_WAIT = 120  # максимум секунд ожидания остывания перед файлом
+
+    with _quiet_lock:
+        queue = list(_quiet_state["queue"])
+        delay = _quiet_state["delay_sec"]
+
+    for idx, rel_path in enumerate(queue):
+        with _quiet_lock:
+            if _quiet_state["stopped"]:
+                break
+            _quiet_state["current"] = rel_path
+            remaining = len(queue) - idx
+            _quiet_state["eta_sec"] = remaining * delay
+
+        def _log(msg):
+            with _quiet_lock:
+                _quiet_state["log"].append(msg)
+                if len(_quiet_state["log"]) > 100:
+                    _quiet_state["log"] = _quiet_state["log"][-100:]
+
+        _log(f"[{idx+1}/{len(queue)}] Ожидаю остывания перед: {rel_path}")
+
+        # ── Thermal wait ──────────────────────────────────────────────────
+        waited = 0
+        while waited < MAX_THERMAL_WAIT:
+            with _quiet_lock:
+                if _quiet_state["stopped"]:
+                    break
+            cpu_idle = _quiet_get_cpu_idle()
+            if cpu_idle >= COOL_THRESHOLD:
+                break
+            _log(f"  🌡 CPU idle {cpu_idle:.0f}% < {COOL_THRESHOLD}% — жду 10 сек...")
+            time.sleep(10)
+            waited += 10
+
+        with _quiet_lock:
+            if _quiet_state["stopped"]:
+                break
+
+        # ── Импорт файла ──────────────────────────────────────────────────
+        _log(f"  ▶ Индексирую: {rel_path}")
+        try:
+            import tools as _tools
+            _tools.load_config()
+            result = _tools.ingest_source(rel_path)
+            ok = not result.startswith("Ошибка")
+            with _quiet_lock:
+                if ok:
+                    _quiet_state["done"] += 1
+                    _log(f"  ✓ OK: {rel_path}")
+                else:
+                    _quiet_state["errors"] += 1
+                    _log(f"  ✗ Ошибка: {result[:120]}")
+        except Exception as e:
+            with _quiet_lock:
+                _quiet_state["errors"] += 1
+                _log(f"  ✗ Exception: {str(e)[:120]}")
+
+        with _quiet_lock:
+            if _quiet_state["stopped"]:
+                break
+
+        # ── Пауза между файлами ───────────────────────────────────────────
+        # Разбиваем на 1-секундные шаги — чтобы Стоп реагировал быстро.
+        for _ in range(delay):
+            with _quiet_lock:
+                if _quiet_state["stopped"]:
+                    break
+            time.sleep(1)
+
+    with _quiet_lock:
+        _quiet_state["running"] = False
+        _quiet_state["current"] = ""
+        if not _quiet_state["stopped"]:
+            _quiet_state["stopped"] = False  # завершение без остановки
+        _log("✅ Тихая индексация завершена.")
+
 def pull_model_thread(model_name, ollama_url_base):
     global pull_status
     with pull_status_lock:
@@ -552,6 +681,15 @@ class MemexDashboardHandler(BaseHTTPRequestHandler):
             self.wfile.write(json.dumps(logs, ensure_ascii=False).encode("utf-8"))
             return
 
+        # ── Тихая индексация: статус (GET) ──────────────────────────────────
+        if path == "/api/ingest_quiet_status":
+            with _quiet_lock:
+                snap = dict(_quiet_state)
+                snap.pop("queue", None)  # не гоним весь список в ответе
+            self._set_headers(200)
+            self.wfile.write(json.dumps(snap, ensure_ascii=False).encode("utf-8"))
+            return
+
         # Неизвестный маршрут
         self._set_headers(404, "text/plain")
         self.wfile.write("Not Found".encode("utf-8"))
@@ -691,9 +829,45 @@ class MemexDashboardHandler(BaseHTTPRequestHandler):
                 self.wfile.write(json.dumps({"success": False, "error": str(e)}, ensure_ascii=False).encode("utf-8"))
             return
 
+
+        if path == "/api/ingest_quiet_start":
+            files = payload.get("files", [])
+            delay = int(payload.get("delay_sec", 30))
+            if not files:
+                self._set_headers(400)
+                self.wfile.write(json.dumps({"error": "files list is empty"}).encode())
+                return
+            with _quiet_lock:
+                if _quiet_state["running"]:
+                    self._set_headers(200)
+                    self.wfile.write(json.dumps({"ok": False, "error": "already running"}).encode())
+                    return
+                _quiet_state.update({
+                    "running": True, "stopped": False,
+                    "total":   len(files), "done": 0, "errors": 0,
+                    "current": "", "queue":  list(files),
+                    "log":     [f"🌙 Запуск тихой индексации: {len(files)} файлов, пауза {delay}с"],
+                    "eta_sec": len(files) * delay, "delay_sec": delay,
+                })
+            t = threading.Thread(target=quiet_ingest_worker, daemon=True, name="quiet-ingest")
+            t.start()
+            self._set_headers(200)
+            self.wfile.write(json.dumps({"ok": True, "total": len(files)}).encode())
+            return
+
+        # ── Тихая индексация: стоп ─────────────────────────────────────────
+        if path == "/api/ingest_quiet_stop":
+            with _quiet_lock:
+                _quiet_state["stopped"] = True
+                _quiet_state["running"] = False
+            self._set_headers(200)
+            self.wfile.write(json.dumps({"ok": True}).encode())
+            return
+
         # Неизвестный маршрут
         self._set_headers(404, "text/plain")
         self.wfile.write("Not Found".encode("utf-8"))
+
 
 def run_server(port=8000):
     server_address = ("", port)

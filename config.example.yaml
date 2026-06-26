@@ -18,6 +18,8 @@ llm:
   model: "qwen2.5:3b"
   # URL для подключения к Ollama (если выбран backend: "ollama")
   ollama_url: "http://localhost:11434/api/generate"
+  # Лимит потоков CPU только для тихой (фоновой) индексации
+  quiet_threads: 2
   # Ключ Gemini API (можно оставить пустым, если задана переменная окружения GEMINI_API_KEY)
   gemini_api_key: ""
 

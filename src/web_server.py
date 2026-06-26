@@ -27,20 +27,115 @@ _quiet_state = {
     "delay_sec": 30,         # пауза между файлами (сек)
 }
 
-def _quiet_get_cpu_idle():
-    """Два замера top, возвращает CPU idle% за последнюю секунду."""
-    import subprocess as _sp, re as _re
+def get_system_thermal_status():
+    """Сбор теплового статуса системы на macOS (без sudo)."""
+    import multiprocessing, subprocess as sp, re as _re
+    result = {"level": 0, "label": "cool", "cpu_idle": 100.0,
+              "load_per_core": 0.0, "battery_temp_c": None,
+              "sources": [], "pause_ms": 0}
     try:
-        out = _sp.run(["top", "-l", "2", "-n", "0", "-s", "1"],
-                      capture_output=True, text=True, timeout=6).stdout
-        matches = _re.findall(r"(\d+\.\d+)%\s+idle", out)
-        if len(matches) >= 2:
-            return float(matches[-1])
-        if matches:
-            return float(matches[0])
-    except Exception:
-        pass
-    return 100.0
+        cpus = multiprocessing.cpu_count()
+        load1, load5, _ = os.getloadavg()
+        load_per_core_1m = load1 / max(cpus, 1)
+        load_per_core_5m = load5 / max(cpus, 1)
+
+        # ── Источник 1: CPU idle% — два замера, берём ВТОРОЙ (реальный дельта) ──
+        cpu_idle = 100.0
+        try:
+            top_out = sp.run(
+                ["top", "-l", "2", "-n", "0", "-s", "1"],
+                capture_output=True, text=True, timeout=6
+            ).stdout
+            all_matches = _re.findall(r"(\d+\.\d+)%\s+idle", top_out)
+            if len(all_matches) >= 2:
+                cpu_idle = float(all_matches[-1])   # последний = 2-й кадр
+            elif all_matches:
+                cpu_idle = float(all_matches[0])
+        except Exception as e_top:
+            logger.warning(f"top -l 2 ошибка: {e_top}")
+
+        # ── Источник 2: температура батареи через ioreg ──
+        battery_temp_c = None
+        virtual_temp_c = None
+        try:
+            ioreg_out = sp.run(
+                ["ioreg", "-r", "-d", "1", "-c", "AppleSmartBattery",
+                 "-k", "Temperature", "-k", "VirtualTemperature"],
+                capture_output=True, text=True, timeout=3
+            ).stdout
+            m_temp = _re.search(r'"Temperature"\s*=\s*(\d+)', ioreg_out)
+            m_virt = _re.search(r'"VirtualTemperature"\s*=\s*(\d+)', ioreg_out)
+            if m_temp:
+                battery_temp_c = round(int(m_temp.group(1)) / 100.0, 1)
+            if m_virt:
+                virtual_temp_c = round(int(m_virt.group(1)) / 100.0, 1)
+        except Exception as e_ior:
+            logger.warning(f"ioreg температура ошибка: {e_ior}")
+
+        # ── Уровень по каждому источнику, берём максимум ──
+        sources = []
+
+        # CPU idle (тиски: >70% cool, 55-70 warm, 35-55 hot, <35 critical)
+        if cpu_idle < 35:
+            lvl_cpu, src_cpu = 3, f"CPU idle {cpu_idle:.0f}% (<35%)"
+        elif cpu_idle < 55:
+            lvl_cpu, src_cpu = 2, f"CPU idle {cpu_idle:.0f}% (<55%)"
+        elif cpu_idle < 70:
+            lvl_cpu, src_cpu = 1, f"CPU idle {cpu_idle:.0f}% (<70%)"
+        else:
+            lvl_cpu, src_cpu = 0, f"CPU idle {cpu_idle:.0f}%"
+        sources.append(src_cpu)
+
+        # Sustained load (5-min avg): >1.0/core hot, >0.7/core warm
+        if load_per_core_5m > 1.0:
+            lvl_load, src_load = 3, f"load5m {load5:.1f} (>{cpus} cores)"
+        elif load_per_core_5m > 0.7:
+            lvl_load, src_load = 2, f"load5m {load5:.1f} (>0.7/core)"
+        elif load_per_core_5m > 0.45:
+            lvl_load, src_load = 1, f"load5m {load5:.1f} (>0.45/core)"
+        else:
+            lvl_load, src_load = 0, f"load5m {load5:.1f}"
+        sources.append(src_load)
+
+        # Температура батареи
+        lvl_batt = 0
+        if virtual_temp_c is not None:
+            temp_ref = virtual_temp_c
+        elif battery_temp_c is not None:
+            temp_ref = battery_temp_c
+        else:
+            temp_ref = None
+
+        if temp_ref is not None:
+            if temp_ref > 50:
+                lvl_batt, src_batt = 3, f"batt {temp_ref:.0f}°C (>50°C 🔥)"
+            elif temp_ref > 42:
+                lvl_batt, src_batt = 2, f"batt {temp_ref:.0f}°C (>42°C)"
+            elif temp_ref > 35:
+                lvl_batt, src_batt = 1, f"batt {temp_ref:.0f}°C (>35°C)"
+            else:
+                lvl_batt, src_batt = 0, f"batt {temp_ref:.0f}°C"
+            sources.append(src_batt)
+
+        # Итоговый уровень = наихудший из всех источников
+        level = max(lvl_cpu, lvl_load, lvl_batt)
+
+        labels = {0: "cool", 1: "warm", 2: "hot", 3: "critical"}
+        label  = labels[level]
+        pause_ms_map = {0: 0, 1: 3000, 2: 8000, 3: 20000}
+
+        result = {
+            "level":          level,
+            "label":          label,
+            "cpu_idle":       round(cpu_idle, 1),
+            "load_per_core":  round(load_per_core_1m, 2),
+            "battery_temp_c": temp_ref,
+            "sources":        sources,
+            "pause_ms":       pause_ms_map[level]
+        }
+    except Exception as e:
+        logger.warning(f"Не удалось получить тепловой статус: {e}")
+    return result
 
 
 def quiet_ingest_worker():
@@ -49,9 +144,8 @@ def quiet_ingest_worker():
     Принципы:
     - os.nice(19) — минимальный приоритет CPU.
     - Пауза DELAY_SEC между файлами (по умолчанию 30 сек).
-    - Перед каждым файлом проверяет CPU idle:
-      если < 70% — ждёт дополнительно до 120 сек, переопрашивая каждые 10 сек.
-    - Никогда не держит открытое HTTP-соединение.
+    - Закрытый цикл термо-дросселирования: при уровне hot (2) или critical (3) засыпает по 15 секунд до остывания.
+    - Адаптивная пауза после каждого файла: delay_sec при cool, delay_sec + 10 при warm, delay_sec + 30 при hot.
     """
     import time, traceback
 
@@ -71,36 +165,33 @@ def quiet_ingest_worker():
         except Exception:
             pass
 
-        COOL_THRESHOLD  = 70   # % CPU idle — «достаточно холодно»
-        MAX_THERMAL_WAIT = 120  # максимум секунд ожидания остывания перед файлом
-
         with _quiet_lock:
             queue = list(_quiet_state["queue"])
             delay = _quiet_state["delay_sec"]
 
-        _log(f"🌙 Воркер запущен: {len(queue)} файлов, пауза {delay}с")
+        _log(f"🌙 Воркер запущен: {len(queue)} файлов, базовая пауза {delay}с")
 
         for idx, rel_path in enumerate(queue):
             with _quiet_lock:
                 if _quiet_state["stopped"]:
                     break
                 _quiet_state["current"] = rel_path
-                _quiet_state["eta_sec"] = (len(queue) - idx) * delay
+                base_delay = _quiet_state["delay_sec"]
+                _quiet_state["eta_sec"] = (len(queue) - idx) * base_delay
 
-            _log(f"[{idx+1}/{len(queue)}] Проверяю температуру перед: {rel_path}")
+            _log(f"[{idx+1}/{len(queue)}] Проверяю тепловой режим перед: {rel_path}")
 
-            # ── Thermal wait ──────────────────────────────────────────────
-            waited = 0
-            while waited < MAX_THERMAL_WAIT:
+            # ── Закрытый цикл термо-дросселирования ──
+            while True:
                 with _quiet_lock:
                     if _quiet_state["stopped"]:
                         break
-                cpu_idle = _quiet_get_cpu_idle()
-                if cpu_idle >= COOL_THRESHOLD:
+                thermal = get_system_thermal_status()
+                lvl = thermal.get("level", 0)
+                if lvl < 2:  # cool (0) или warm (1)
                     break
-                _log(f"  🌡 CPU idle {cpu_idle:.0f}% < {COOL_THRESHOLD}% — жду 10 сек...")
-                time.sleep(10)
-                waited += 10
+                _log(f"  🌡 Система перегрета (level {lvl}, {thermal.get('label')}) — жду 15 сек до остывания...")
+                time.sleep(15)
 
             with _quiet_lock:
                 if _quiet_state["stopped"]:
@@ -110,7 +201,8 @@ def quiet_ingest_worker():
             _log(f"  ▶ Индексирую: {rel_path}")
             try:
                 tools.load_config()
-                result = tools.ingest_source(rel_path)
+                quiet_threads = tools.config.get("llm", {}).get("quiet_threads", 2)
+                result = tools.ingest_source(rel_path, options={"num_thread": quiet_threads})
 
                 ok = not result.startswith("Ошибка")
                 with _quiet_lock:
@@ -134,9 +226,24 @@ def quiet_ingest_worker():
                 if _quiet_state["stopped"]:
                     break
 
-            # ── Пауза между файлами ───────────────────────────────────────
+            # ── Пауза между файлами (с адаптивной логикой) ────────────────
+            thermal = get_system_thermal_status()
+            lvl = thermal.get("level", 0)
+            with _quiet_lock:
+                base_delay = _quiet_state["delay_sec"]
+
+            if lvl == 1:      # warm
+                actual_delay = base_delay + 10
+                _log(f"  🌡 Тепловой режим: warm. Увеличиваю паузу на 10с (итого {actual_delay}с)")
+            elif lvl >= 2:    # hot / critical
+                actual_delay = base_delay + 30
+                _log(f"  🌡 Тепловой режим: hot/critical. Увеличиваю паузу на 30с (итого {actual_delay}с)")
+            else:             # cool
+                actual_delay = base_delay
+                _log(f"  ❄ Тепловой режим: cool. Пауза {actual_delay}с")
+
             # 1-секундные шаги — Стоп реагирует мгновенно.
-            for _ in range(delay):
+            for _ in range(actual_delay):
                 with _quiet_lock:
                     if _quiet_state["stopped"]:
                         break
@@ -217,18 +324,26 @@ tools = MemexTools(config_path)
 linter = GraphLinter(config_path)
 
 def should_exclude(rel_path, exclude_patterns):
+    import fnmatch
     parts = rel_path.replace("\\", "/").split("/")
     for part in parts:
-        if part in exclude_patterns:
+        part_lower = part.lower()
+        # 1. Игнорируем скрытые файлы/папки
+        if part.startswith(".") and part != ".":
             return True
-    for pat in exclude_patterns:
-        if pat.startswith("*."):
-            ext = pat[1:] # e.g. .png
-            if rel_path.lower().endswith(ext.lower()):
+        # 2. Игнорируем папки библиотек и кэшей
+        if part_lower in ["node_modules", "build", "dist", "target", "out", "__pycache__", "site-packages", "dist-packages", "lib-dynload"]:
+            return True
+        # 3. Игнорируем виртуальные окружения (venv*, env*)
+        if part_lower.startswith("venv") or part_lower.startswith("env"):
+            return True
+        # 4. Проверка компонентов по шаблонам
+        for pat in exclude_patterns:
+            if fnmatch.fnmatch(part_lower, pat.lower()):
                 return True
-    # Игнорируем скрытые файлы (начинающиеся с точки)
-    for part in parts:
-        if part.startswith("."):
+    # 5. Проверка всего пути по шаблонам
+    for pat in exclude_patterns:
+        if fnmatch.fnmatch(rel_path.lower(), pat.lower()):
             return True
     return False
 
@@ -452,7 +567,7 @@ class MemexDashboardHandler(BaseHTTPRequestHandler):
             # Шаг 2: сканируем raw folder со стримингом
             dirs_scanned = 0
             for root, dirs, files in os.walk(raw_dir):
-                dirs[:] = [d for d in dirs if not should_exclude(os.path.join(root, d), exclude)]
+                dirs[:] = [d for d in dirs if not should_exclude(os.path.relpath(os.path.join(root, d), raw_dir), exclude)]
                 rel_dir = os.path.relpath(root, raw_dir)
                 dirs_scanned += 1
 
@@ -515,7 +630,7 @@ class MemexDashboardHandler(BaseHTTPRequestHandler):
                             wiki_files[f[:-3].lower()] = os.path.getmtime(os.path.join(root, f))
 
                 for root, dirs, files in os.walk(raw_dir):
-                    dirs[:] = [d for d in dirs if not should_exclude(os.path.join(root, d), exclude)]
+                    dirs[:] = [d for d in dirs if not should_exclude(os.path.relpath(os.path.join(root, d), raw_dir), exclude)]
                     for f in files:
                         filepath = os.path.join(root, f)
                         rel_path = os.path.relpath(filepath, raw_dir)
@@ -555,118 +670,7 @@ class MemexDashboardHandler(BaseHTTPRequestHandler):
 
         # 5c. API: Тепловой статус системы (без sudo)
         if path == "/api/thermal":
-            import multiprocessing, subprocess as sp, re as _re
-            result = {"level": 0, "label": "cool", "cpu_idle": 100.0,
-                      "load_per_core": 0.0, "battery_temp_c": None,
-                      "sources": [], "pause_ms": 0}
-            try:
-                cpus = multiprocessing.cpu_count()
-                load1, load5, _ = os.getloadavg()
-                load_per_core_1m = load1 / max(cpus, 1)
-                load_per_core_5m = load5 / max(cpus, 1)
-
-                # ── Источник 1: CPU idle% — два замера, берём ВТОРОЙ (реальный дельта) ──
-                # top -l 1 возвращает накопленный % с загрузки ОС — неточно.
-                # top -l 2 -s 1: первый кадр = с загрузки, второй = за последнюю секунду.
-                cpu_idle = 100.0
-                try:
-                    top_out = sp.run(
-                        ["top", "-l", "2", "-n", "0", "-s", "1"],
-                        capture_output=True, text=True, timeout=6
-                    ).stdout
-                    all_matches = _re.findall(r"(\d+\.\d+)%\s+idle", top_out)
-                    if len(all_matches) >= 2:
-                        cpu_idle = float(all_matches[-1])   # последний = 2-й кадр
-                    elif all_matches:
-                        cpu_idle = float(all_matches[0])
-                except Exception as e_top:
-                    logger.warning(f"top -l 2 ошибка: {e_top}")
-
-                # ── Источник 2: температура батареи через ioreg (без sudo) ──
-                # AppleSmartBattery → Temperature (в единицах 0.01°C)
-                battery_temp_c = None
-                virtual_temp_c = None
-                try:
-                    ioreg_out = sp.run(
-                        ["ioreg", "-r", "-d", "1", "-c", "AppleSmartBattery",
-                         "-k", "Temperature", "-k", "VirtualTemperature"],
-                        capture_output=True, text=True, timeout=3
-                    ).stdout
-                    m_temp = _re.search(r'"Temperature"\s*=\s*(\d+)', ioreg_out)
-                    m_virt = _re.search(r'"VirtualTemperature"\s*=\s*(\d+)', ioreg_out)
-                    if m_temp:
-                        battery_temp_c = round(int(m_temp.group(1)) / 100.0, 1)
-                    if m_virt:
-                        virtual_temp_c = round(int(m_virt.group(1)) / 100.0, 1)
-                except Exception as e_ior:
-                    logger.warning(f"ioreg температура ошибка: {e_ior}")
-
-                # ── Уровень по каждому источнику, берём максимум ──
-                sources = []
-
-                # CPU idle (тиски: >70% cool, 55-70 warm, 35-55 hot, <35 critical)
-                if cpu_idle < 35:
-                    lvl_cpu, src_cpu = 3, f"CPU idle {cpu_idle:.0f}% (<35%)"
-                elif cpu_idle < 55:
-                    lvl_cpu, src_cpu = 2, f"CPU idle {cpu_idle:.0f}% (<55%)"
-                elif cpu_idle < 70:
-                    lvl_cpu, src_cpu = 1, f"CPU idle {cpu_idle:.0f}% (<70%)"
-                else:
-                    lvl_cpu, src_cpu = 0, f"CPU idle {cpu_idle:.0f}%"
-                sources.append(src_cpu)
-
-                # Sustained load (5-min avg): >1.0/core hot, >0.7/core warm
-                if load_per_core_5m > 1.0:
-                    lvl_load, src_load = 3, f"load5m {load5:.1f} (>{cpus} cores)"
-                elif load_per_core_5m > 0.7:
-                    lvl_load, src_load = 2, f"load5m {load5:.1f} (>0.7/core)"
-                elif load_per_core_5m > 0.45:
-                    lvl_load, src_load = 1, f"load5m {load5:.1f} (>0.45/core)"
-                else:
-                    lvl_load, src_load = 0, f"load5m {load5:.1f}"
-                sources.append(src_load)
-
-                # Температура батареи (рядом с CPU, хороший косвенный показатель)
-                # MacBook нормальная: <35°C. Тёплая: 35-42°C. Горячая: 42-50°C. Критично: >50°C
-                lvl_batt = 0
-                if virtual_temp_c is not None:
-                    temp_ref = virtual_temp_c  # VirtualTemperature точнее при нагрузке
-                elif battery_temp_c is not None:
-                    temp_ref = battery_temp_c
-                else:
-                    temp_ref = None
-
-                if temp_ref is not None:
-                    if temp_ref > 50:
-                        lvl_batt, src_batt = 3, f"batt {temp_ref:.0f}°C (>50°C 🔥)"
-                    elif temp_ref > 42:
-                        lvl_batt, src_batt = 2, f"batt {temp_ref:.0f}°C (>42°C)"
-                    elif temp_ref > 35:
-                        lvl_batt, src_batt = 1, f"batt {temp_ref:.0f}°C (>35°C)"
-                    else:
-                        lvl_batt, src_batt = 0, f"batt {temp_ref:.0f}°C"
-                    sources.append(src_batt)
-
-                # Итоговый уровень = наихудший из всех источников
-                level = max(lvl_cpu, lvl_load, lvl_batt)
-
-                labels = {0: "cool", 1: "warm", 2: "hot", 3: "critical"}
-                label  = labels[level]
-                # Пауза теперь только сигнальная (фронтенд сам ждёт остывания)
-                pause_ms_map = {0: 0, 1: 3000, 2: 8000, 3: 20000}
-
-                result = {
-                    "level":          level,
-                    "label":          label,
-                    "cpu_idle":       round(cpu_idle, 1),
-                    "load_per_core":  round(load_per_core_1m, 2),
-                    "battery_temp_c": temp_ref,
-                    "sources":        sources,
-                    "pause_ms":       pause_ms_map[level]
-                }
-            except Exception as e:
-                logger.warning(f"Не удалось получить тепловой статус: {e}")
-
+            result = get_system_thermal_status()
             self._set_headers(200)
             self.wfile.write(json.dumps(result, ensure_ascii=False).encode("utf-8"))
             return

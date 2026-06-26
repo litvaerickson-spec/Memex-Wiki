@@ -68,7 +68,7 @@ class MemexTools:
                 return val
         return ""
 
-    def query_llm(self, prompt: str, system_instruction: str = "") -> str:
+    def query_llm(self, prompt: str, system_instruction: str = "", options: dict = None) -> str:
         """Отправляет запрос к LLM (Gemini API или Ollama) с очисткой безопасности."""
         safe_prompt = self.security_filter.redact_text(prompt)
         
@@ -118,6 +118,8 @@ class MemexTools:
             }
             if system_instruction:
                 body["system"] = system_instruction
+            if options:
+                body["options"] = options
                 
             req_data = json.dumps(body).encode("utf-8")
             req = urllib.request.Request(self.ollama_url, data=req_data, headers={"Content-Type": "application/json"})
@@ -233,7 +235,7 @@ class MemexTools:
 
     # --- Бизнес-логика: Ingest Source ---
 
-    def ingest_source(self, filename: str) -> str:
+    def ingest_source(self, filename: str, options: dict = None) -> str:
         """
         Импортирует исходный документ из raw-папки проектов,
         производит CoT-выделение сущностей и создает/обновляет страницы wiki.
@@ -314,7 +316,7 @@ class MemexTools:
 }}
 """
         try:
-            response_raw = self.query_llm(prompt, system_instruction)
+            response_raw = self.query_llm(prompt, system_instruction, options=options)
             # Очищаем от возможных ```json ... ``` оберток
             clean_json = re.sub(r"^```json\s*", "", response_raw.strip())
             clean_json = re.sub(r"\s*```$", "", clean_json.strip())

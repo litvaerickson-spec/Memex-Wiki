@@ -709,6 +709,39 @@ class MemexDashboardHandler(BaseHTTPRequestHandler):
             self.wfile.write(json.dumps(snap, ensure_ascii=False).encode("utf-8"))
             return
 
+        # ── Сброс индекса: предпросмотр (GET) ──
+        if path == "/api/reset_index_preview":
+            tools.load_config()
+            wiki_dir = tools.wiki_dir
+            to_delete = []
+            to_skip = []
+            
+            if wiki_dir and os.path.exists(wiki_dir):
+                for root, dirs, files in os.walk(wiki_dir):
+                    if ".git" in dirs:
+                        dirs.remove(".git")
+                    for f in files:
+                        if f.endswith(".md"):
+                            filepath = os.path.join(root, f)
+                            rel_path = os.path.relpath(filepath, wiki_dir)
+                            if f == "log.md":
+                                to_delete.append(rel_path)
+                                continue
+                            try:
+                                with open(filepath, "r", encoding="utf-8", errors="ignore") as file_obj:
+                                    content = file_obj.read()
+                                metadata, _ = tools.parse_frontmatter(content)
+                                if metadata.get("type") in ["source", "concept"]:
+                                    to_delete.append(rel_path)
+                                else:
+                                    to_skip.append(rel_path)
+                            except Exception:
+                                to_skip.append(rel_path)
+                                
+            self._set_headers(200)
+            self.wfile.write(json.dumps({"to_delete": to_delete, "to_skip": to_skip}, ensure_ascii=False).encode("utf-8"))
+            return
+
         # Неизвестный маршрут
         self._set_headers(404, "text/plain")
         self.wfile.write("Not Found".encode("utf-8"))
@@ -881,6 +914,102 @@ class MemexDashboardHandler(BaseHTTPRequestHandler):
                 _quiet_state["running"] = False
             self._set_headers(200)
             self.wfile.write(json.dumps({"ok": True}).encode())
+            return
+
+        # ── Сброс индекса: выполнение (POST) ──
+        if path == "/api/reset_index":
+            try:
+                tools.load_config()
+                wiki_dir = tools.wiki_dir
+                
+                if not wiki_dir or not os.path.exists(wiki_dir):
+                    self._set_headers(400)
+                    self.wfile.write(json.dumps({"success": False, "error": "Wiki directory not found"}, ensure_ascii=False).encode("utf-8"))
+                    return
+                
+                abs_wiki = os.path.abspath(wiki_dir)
+                if abs_wiki == "/" or abs_wiki == os.path.expanduser("~"):
+                    self._set_headers(400)
+                    self.wfile.write(json.dumps({"success": False, "error": "Safety check: wiki directory cannot be root or home directory"}, ensure_ascii=False).encode("utf-8"))
+                    return
+                
+                # 1. Автоматический Git бэкап
+                backed_up = False
+                if os.path.exists(os.path.join(wiki_dir, ".git")):
+                    backed_up = tools.git_commit("Backup: before index reset")
+                
+                # 2. Удаление квалифицированных файлов
+                deleted_count = 0
+                for root, dirs, files in os.walk(wiki_dir):
+                    if ".git" in dirs:
+                        dirs.remove(".git")
+                    for f in files:
+                        if f.endswith(".md"):
+                            filepath = os.path.join(root, f)
+                            should_del = False
+                            if f == "log.md":
+                                should_del = True
+                            else:
+                                try:
+                                    with open(filepath, "r", encoding="utf-8", errors="ignore") as file_obj:
+                                        content = file_obj.read()
+                                    metadata, _ = tools.parse_frontmatter(content)
+                                    if metadata.get("type") in ["source", "concept"]:
+                                        should_del = True
+                                except Exception:
+                                    pass
+                            
+                            if should_del:
+                                os.remove(filepath)
+                                deleted_count += 1
+                                
+                self._set_headers(200)
+                self.wfile.write(json.dumps({"success": True, "deleted_count": deleted_count, "backed_up": backed_up}, ensure_ascii=False).encode("utf-8"))
+            except Exception as e:
+                self._set_headers(500)
+                self.wfile.write(json.dumps({"success": False, "error": str(e)}, ensure_ascii=False).encode("utf-8"))
+            return
+
+        # ── Отмена сброса: восстановление из Git-бэкапа (POST) ──
+        if path == "/api/restore_backup":
+            try:
+                tools.load_config()
+                wiki_dir = tools.wiki_dir
+                
+                if not wiki_dir or not os.path.exists(wiki_dir):
+                    self._set_headers(400)
+                    self.wfile.write(json.dumps({"success": False, "error": "Wiki directory not found"}, ensure_ascii=False).encode("utf-8"))
+                    return
+                
+                git_dir = os.path.join(wiki_dir, ".git")
+                if not os.path.exists(git_dir):
+                    self._set_headers(400)
+                    self.wfile.write(json.dumps({"success": False, "error": "Git repository not initialized in wiki folder"}, ensure_ascii=False).encode("utf-8"))
+                    return
+                
+                # Проверяем последний коммит
+                import subprocess
+                last_commit_msg = subprocess.run(
+                    ["git", "log", "-1", "--pretty=%B"],
+                    cwd=wiki_dir, capture_output=True, text=True, check=True
+                ).stdout.strip()
+                
+                if last_commit_msg != "Backup: before index reset":
+                    self._set_headers(400)
+                    self.wfile.write(json.dumps({"success": False, "error": f"Last commit is not a reset backup. Commit message: '{last_commit_msg}'"}, ensure_ascii=False).encode("utf-8"))
+                    return
+                
+                # Выполняем восстановление
+                subprocess.run(
+                    ["git", "reset", "--hard", "HEAD"],
+                    cwd=wiki_dir, capture_output=True, text=True, check=True
+                )
+                
+                self._set_headers(200)
+                self.wfile.write(json.dumps({"success": True}, ensure_ascii=False).encode("utf-8"))
+            except Exception as e:
+                self._set_headers(500)
+                self.wfile.write(json.dumps({"success": False, "error": str(e)}, ensure_ascii=False).encode("utf-8"))
             return
 
         # Неизвестный маршрут

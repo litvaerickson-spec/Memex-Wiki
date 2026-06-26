@@ -398,6 +398,181 @@
             background: var(--card-hover);
         }
 
+        .btn-danger {
+            background: var(--error) !important;
+            color: #ffffff !important;
+            border: none;
+        }
+
+        .btn-danger:hover {
+            opacity: 0.9;
+        }
+
+        /* Modal Styles */
+        .modal-overlay {
+            position: fixed;
+            top: 0;
+            left: 0;
+            width: 100vw;
+            height: 100vh;
+            background: rgba(0, 0, 0, 0.6);
+            backdrop-filter: blur(8px);
+            z-index: 1000;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            opacity: 0;
+            pointer-events: none;
+            transition: opacity 0.3s ease;
+        }
+
+        .modal-overlay.open {
+            opacity: 1;
+            pointer-events: auto;
+        }
+
+        .modal-window {
+            background: var(--overlay-bg);
+            border: 1px solid var(--border);
+            border-radius: 16px;
+            width: 500px;
+            max-width: 90%;
+            padding: 24px;
+            box-shadow: 0 20px 40px rgba(0,0,0,0.3);
+            transform: scale(0.9);
+            transition: transform 0.3s cubic-bezier(0.16, 1, 0.3, 1);
+            color: var(--text);
+            display: flex;
+            flex-direction: column;
+            gap: 16px;
+        }
+
+        .modal-overlay.open .modal-window {
+            transform: scale(1);
+        }
+
+        .modal-header {
+            font-size: 18px;
+            font-weight: 700;
+            display: flex;
+            align-items: center;
+            gap: 8px;
+            color: var(--error);
+        }
+
+        .modal-body {
+            font-size: 13.5px;
+            line-height: 1.5;
+            color: var(--text-muted);
+            display: flex;
+            flex-direction: column;
+            gap: 12px;
+        }
+
+        .modal-input {
+            width: 100%;
+            background: var(--bg);
+            border: 1px solid var(--border);
+            border-radius: 8px;
+            padding: 10px 12px;
+            color: var(--text);
+            font-family: inherit;
+            font-size: 14px;
+            outline: none;
+            box-sizing: border-box;
+        }
+
+        .modal-input:focus {
+            border-color: var(--error);
+        }
+
+        .modal-actions {
+            display: flex;
+            justify-content: flex-end;
+            gap: 12px;
+            margin-top: 8px;
+        }
+
+        .file-list-preview {
+            max-height: 150px;
+            overflow-y: auto;
+            border: 1px solid var(--border);
+            border-radius: 8px;
+            padding: 10px;
+            background: var(--bg);
+            font-family: monospace;
+            font-size: 11px;
+            display: flex;
+            flex-direction: column;
+            gap: 4px;
+        }
+
+        .file-preview-item {
+            display: flex;
+            align-items: center;
+            gap: 6px;
+        }
+
+        .preview-dot {
+            width: 6px;
+            height: 6px;
+            border-radius: 50%;
+            display: inline-block;
+        }
+
+        .preview-dot.delete {
+            background: var(--error);
+        }
+
+        .preview-dot.skip {
+            background: var(--success);
+        }
+
+        /* Undo Banner Styles */
+        .undo-banner {
+            position: fixed;
+            top: 20px;
+            left: 50%;
+            transform: translateX(-50%) translateY(-100px);
+            background: var(--panel-bg);
+            border: 1px solid var(--border);
+            box-shadow: 0 10px 30px rgba(0,0,0,0.25);
+            border-radius: 12px;
+            padding: 12px 24px;
+            z-index: 1001;
+            display: flex;
+            align-items: center;
+            gap: 16px;
+            font-size: 13.5px;
+            transition: transform 0.4s cubic-bezier(0.175, 0.885, 0.32, 1.275);
+            pointer-events: none;
+            opacity: 0;
+            border-left: 4px solid #6366f1;
+        }
+
+        .undo-banner.show {
+            transform: translateX(-50%) translateY(0);
+            pointer-events: auto;
+            opacity: 1;
+        }
+
+        .undo-btn {
+            background: transparent;
+            color: #6366f1;
+            border: 1px solid #6366f1;
+            padding: 6px 12px;
+            border-radius: 6px;
+            font-size: 12px;
+            font-weight: 600;
+            cursor: pointer;
+            transition: all 0.2s ease;
+        }
+
+        .undo-btn:hover {
+            background: #6366f1;
+            color: #ffffff;
+        }
+
         .form-group {
             margin-bottom: 24px;
             display: flex;
@@ -838,6 +1013,9 @@
                     <button class="btn btn-secondary" id="ingest-all-btn" onclick="ingestAllScanned()" style="display: none;" data-i18n="btn_ingest_all">Импортировать все найденные</button>
                     <button class="btn btn-secondary" id="ingest-quiet-btn" onclick="startQuietIngest()" style="display: none; border-color: #6366f1; color: #6366f1;">
                         🌙 Тихая индексация
+                    </button>
+                    <button class="btn btn-secondary btn-danger" id="reset-index-btn" onclick="openResetModal()">
+                        <span>⚠</span> <span data-i18n="btn_reset_index">Сбросить индекс</span>
                     </button>
                 </div>
 
@@ -1395,6 +1573,20 @@
                 scan_new_label: "Новых",
                 scan_modified_label: "Изменённых",
                 scan_uptodate_label: "Актуальных",
+                btn_reset_index: "Сбросить индекс",
+                reset_success_msg: "Индекс памяти успешно сброшен.",
+                btn_undo: "Восстановить файлы",
+                reset_modal_title: "Опасное действие: Сброс индекса",
+                reset_modal_desc1: "Это действие удалит все автоматически сгенерированные файлы источников и концептов в папке wiki. Ваши ручные правки в них будут потеряны.",
+                reset_modal_desc2: "Перед удалением будет автоматически создан резервный Git-коммит (если Git настроен).",
+                reset_modal_analyzing: "Анализирую файлы базы знаний...",
+                reset_modal_to_delete: "Будет удалено:",
+                reset_modal_to_skip: "Будет пропущено (личные заметки):",
+                reset_modal_files_unit: "файлов",
+                reset_modal_show_files: "Показать список файлов",
+                reset_modal_confirm_prompt: "Для подтверждения введите слово СБРОС в поле ниже:",
+                btn_cancel: "Отмена",
+                btn_confirm_reset: "Сбросить индекс",
 
                 
                 settings_title: "Настройки системы",
@@ -1546,6 +1738,20 @@
                 scan_new_label: "New",
                 scan_modified_label: "Modified",
                 scan_uptodate_label: "Up to Date",
+                btn_reset_index: "Reset Index",
+                reset_success_msg: "Memory index reset successfully.",
+                btn_undo: "Restore Files",
+                reset_modal_title: "Dangerous Action: Reset Index",
+                reset_modal_desc1: "This action will delete all automatically generated source and concept files in the wiki folder. Your manual edits to them will be lost.",
+                reset_modal_desc2: "Before deletion, a backup Git commit will be automatically created (if Git is configured).",
+                reset_modal_analyzing: "Analyzing knowledge base files...",
+                reset_modal_to_delete: "To delete:",
+                reset_modal_to_skip: "To skip (personal notes):",
+                reset_modal_files_unit: "files",
+                reset_modal_show_files: "Show file list",
+                reset_modal_confirm_prompt: "To confirm, enter the word RESET in the field below:",
+                btn_cancel: "Cancel",
+                btn_confirm_reset: "Reset Index",
 
                 
                 settings_title: "System Settings",
@@ -3162,7 +3368,183 @@
             }
         }
 
+        // ── Управление модальным окном сброса индекса ──
+        function openResetModal() {
+            const modal = document.getElementById('reset-modal');
+            const loading = document.getElementById('reset-modal-loading');
+            const content = document.getElementById('reset-modal-content');
+            const confirmInput = document.getElementById('reset-confirm-input');
+            const confirmBtn = document.getElementById('reset-confirm-btn');
+            
+            confirmInput.value = '';
+            confirmBtn.disabled = true;
+            loading.style.display = 'block';
+            content.style.display = 'none';
+            modal.classList.add('open');
+            
+            // Запрашиваем предпросмотр
+            fetch('/api/reset_index_preview')
+                .then(r => r.json())
+                .then(data => {
+                    loading.style.display = 'none';
+                    content.style.display = 'flex';
+                    
+                    document.getElementById('reset-delete-count').innerText = data.to_delete.length;
+                    document.getElementById('reset-skip-count').innerText = data.to_skip.length;
+                    
+                    const listContainer = document.getElementById('reset-files-preview');
+                    listContainer.innerHTML = '';
+                    
+                    if (data.to_delete.length === 0 && data.to_skip.length === 0) {
+                        listContainer.innerHTML = `<div style="color: var(--text-muted); text-align: center;">Нет файлов в папке wiki/</div>`;
+                    } else {
+                        data.to_delete.forEach(f => {
+                            listContainer.innerHTML += `
+                                <div class="file-preview-item">
+                                    <span class="preview-dot delete"></span>
+                                    <span style="color: var(--error);">${f}</span>
+                                </div>
+                            `;
+                        });
+                        data.to_skip.forEach(f => {
+                            listContainer.innerHTML += `
+                                <div class="file-preview-item">
+                                    <span class="preview-dot skip"></span>
+                                    <span style="color: var(--success);">${f}</span>
+                                </div>
+                            `;
+                        });
+                    }
+                    
+                    // Слушаем ввод для подтверждения
+                    confirmInput.oninput = (e) => {
+                        const word = currentLang === 'ru' ? 'СБРОС' : 'RESET';
+                        if (e.target.value.trim().toUpperCase() === word) {
+                            confirmBtn.disabled = false;
+                        } else {
+                            confirmBtn.disabled = true;
+                        }
+                    };
+                })
+                .catch(e => {
+                    showToast(currentLang === 'ru' ? 'Ошибка при получении предпросмотра' : 'Error getting preview', true);
+                    closeResetModal();
+                });
+        }
+
+        function closeResetModal() {
+            document.getElementById('reset-modal').classList.remove('open');
+        }
+
+        async function executeIndexReset() {
+            const confirmBtn = document.getElementById('reset-confirm-btn');
+            confirmBtn.disabled = true;
+            confirmBtn.innerText = currentLang === 'ru' ? 'Выполняю сброс...' : 'Resetting...';
+            
+            try {
+                const response = await fetch('/api/reset_index', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' }
+                });
+                const data = await response.json();
+                
+                if (data.success) {
+                    closeResetModal();
+                    const msg = currentLang === 'ru' 
+                        ? `Успешно удалено ${data.deleted_count} файлов.` 
+                        : `Successfully deleted ${data.deleted_count} files.`;
+                    showToast(msg);
+                    
+                    if (data.backed_up) {
+                        const undoBanner = document.getElementById('undo-banner');
+                        undoBanner.classList.add('show');
+                        setTimeout(() => {
+                            undoBanner.classList.remove('show');
+                        }, 15000);
+                    }
+                    
+                    scanRawFiles();
+                } else {
+                    showToast(currentLang === 'ru' ? 'Не удалось сбросить индекс: ' + data.error : 'Failed to reset index: ' + data.error, true);
+                }
+            } catch (e) {
+                showToast(currentLang === 'ru' ? 'Ошибка связи с сервером' : 'Server communication error', true);
+            } finally {
+                confirmBtn.innerText = currentLang === 'ru' ? 'Сбросить индекс' : 'Reset Index';
+                confirmBtn.disabled = false;
+            }
+        }
+
+        async function executeIndexRestore() {
+            const undoBanner = document.getElementById('undo-banner');
+            undoBanner.classList.remove('show');
+            showToast(currentLang === 'ru' ? 'Восстановление файлов из бэкапа...' : 'Restoring files from backup...');
+            
+            try {
+                const response = await fetch('/api/restore_backup', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' }
+                });
+                const data = await response.json();
+                
+                if (data.success) {
+                    showToast(currentLang === 'ru' ? 'Файлы успешно восстановлены!' : 'Files successfully restored!');
+                    scanRawFiles();
+                } else {
+                    showToast(currentLang === 'ru' ? 'Ошибка восстановления: ' + data.error : 'Restore error: ' + data.error, true);
+                }
+            } catch (e) {
+                showToast(currentLang === 'ru' ? 'Ошибка связи с сервером' : 'Server communication error', true);
+            }
+        }
+
     </script>
+
+    <!-- Undo banner -->
+    <div id="undo-banner" class="undo-banner">
+        <span>✓ <span data-i18n="reset_success_msg">Индекс памяти успешно сброшен.</span></span>
+        <button class="undo-btn" onclick="executeIndexRestore()" data-i18n="btn_undo">Восстановить файлы</button>
+    </div>
+
+    <!-- Reset Modal -->
+    <div id="reset-modal" class="modal-overlay">
+        <div class="modal-window">
+            <div class="modal-header">
+                <span>⚠</span> <span data-i18n="reset_modal_title">Опасное действие: Сброс индекса</span>
+            </div>
+            <div class="modal-body">
+                <p data-i18n="reset_modal_desc1">Это действие удалит все автоматически сгенерированные файлы источников и концептов в папке wiki. Ваши ручные правки в них будут потеряны.</p>
+                <p data-i18n="reset_modal_desc2">Перед удалением будет автоматически создан резервный Git-коммит (если Git настроен).</p>
+                
+                <!-- Анимация загрузки / статистика -->
+                <div id="reset-modal-loading" style="text-align: center; padding: 20px 0;">
+                    <div class="spinner" style="margin: 0 auto 10px auto;"></div>
+                    <span data-i18n="reset_modal_analyzing">Анализирую файлы базы знаний...</span>
+                </div>
+                
+                <div id="reset-modal-content" style="display: none; flex-direction: column; gap: 12px;">
+                    <div>
+                        <span style="color: var(--error); font-weight: 600;">🔴 <span data-i18n="reset_modal_to_delete">Будет удалено:</span> <span id="reset-delete-count">0</span> <span data-i18n="reset_modal_files_unit">файлов</span></span>
+                    </div>
+                    <div>
+                        <span style="color: var(--success); font-weight: 600;">🟢 <span data-i18n="reset_modal_to_skip">Будет пропущено (личные заметки):</span> <span id="reset-skip-count">0</span> <span data-i18n="reset_modal_files_unit">файлов</span></span>
+                    </div>
+                    
+                    <details style="margin-top: 6px;">
+                        <summary style="font-size: 12px; cursor: pointer; color: var(--text-muted); outline: none;" data-i18n="reset_modal_show_files">Показать список файлов</summary>
+                        <div id="reset-files-preview" class="file-list-preview" style="margin-top: 8px;"></div>
+                    </details>
+                    
+                    <p style="margin-top: 10px; font-weight: 600; color: var(--text);" data-i18n="reset_modal_confirm_prompt">Для подтверждения введите слово СБРОС в поле ниже:</p>
+                    <input type="text" id="reset-confirm-input" class="modal-input" placeholder="Введите код...">
+                </div>
+            </div>
+            <div class="modal-actions">
+                <button class="btn btn-secondary" onclick="closeResetModal()" data-i18n="btn_cancel">Отмена</button>
+                <button class="btn btn-danger" id="reset-confirm-btn" onclick="executeIndexReset()" disabled data-i18n="btn_confirm_reset">Сбросить индекс</button>
+            </div>
+        </div>
+    </div>
 </body>
 
 </html>

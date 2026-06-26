@@ -2357,19 +2357,40 @@
                 // Рисуем панель (перерисовываем только между файлами)
                 renderPanel(thermalInfo, file.rel_path, i);
 
-                // Тепловая пауза с обратным отсчётом
-                if (thermalInfo && thermalInfo.pause_ms > 0 && !isStopped) {
-                    for (let s = Math.ceil(thermalInfo.pause_ms/1000); s > 0; s--) {
-                        if (isStopped) break;
-                        updateStatus(`${currentLang==='ru'?'🌡 Охлаждаюсь':'🌡 Cooling'} ${s}s...`);
+                // Тепловая пауза: ждём пока система реально остынет, а не просто
+                // спим фиксированное время. Переопрашиваем /api/thermal каждые 5 сек.
+                if (thermalInfo && thermalInfo.level > 0 && !isStopped) {
+                    const coolThreshold = 55; // % CPU idle — считаем «холодно» при этом значении
+                    let elapsed = 0;
+                    while (!isStopped) {
+                        // Обновляем бейдж каждую секунду
+                        updateStatus(
+                            `${thermalInfo.level >= 3 ? '🔴' : thermalInfo.level >= 2 ? '🟠' : '🟡'} ` +
+                            `${currentLang==='ru' ? 'Жду остывания' : 'Waiting to cool'} — ` +
+                            `CPU idle: ${thermalInfo.cpu_idle.toFixed(0)}% (${currentLang==='ru' ? 'нужно' : 'need'} >${coolThreshold}%) · ${elapsed}s`
+                        );
                         await sleep(1000);
+                        elapsed++;
+                        if (isStopped) break;
+
+                        // Переопрашиваем каждые 5 сек
+                        if (elapsed % 5 === 0) {
+                            try {
+                                const tr2 = await fetch('/api/thermal');
+                                thermalInfo = await tr2.json();
+                                updateThermal(thermalInfo);
+                            } catch (_) {}
+
+                            // Если остыло — выходим из цикла ожидания
+                            if (thermalInfo.cpu_idle >= coolThreshold) break;
+                        }
                     }
                     if (isStopped) break;
                     await waitIfPaused();
                     if (isStopped) break;
-                    // Обновляем имя файла после паузы
                     updateStatus(file.rel_path);
                 }
+
 
                 // Импорт — с AbortController чтобы Stop реально прерывал запрос
                 isWaitingServer = true;
@@ -2715,44 +2736,22 @@
             function tick() {
                 try {
                     requestAnimationFrame(tick);
-                    if (graphInstance) {
-                        const camera = graphInstance.camera();
-                        const scene = graphInstance.scene();
-                        
-                        if (camera && scene) {
-                            const data = graphInstance.graphData();
-                            if (data && data.nodes) {
-                                data.nodes.forEach(node => {
-                                    if (node.__threeObj) {
-                                        node.__threeObj.rotation.y += 0.008;
-                                        node.__threeObj.rotation.x += 0.004;
-                                        
-                                        const isHovered = (node.id === hoveredNodeId);
-                                        const targetScale = isHovered ? 1.4 : 1.0;
-                                        const targetEmissive = isHovered ? 0.9 : 0.2;
-                                        
-                                        const currentScale = node.__threeObj.scale.x;
-                                        const nextScale = currentScale + (targetScale - currentScale) * 0.15;
-                                        node.__threeObj.scale.set(nextScale, nextScale, nextScale);
-                                        
-                                        if (node.__threeObj.material) {
-                                            const currentEmissive = node.__threeObj.material.emissiveIntensity;
-                                            node.__threeObj.material.emissiveIntensity = currentEmissive + (targetEmissive - currentEmissive) * 0.15;
-                                        }
-                                    }
-                                });
-                            }
+                    if (!graphInstance) return;
+                    const camera = graphInstance.camera();
+                    if (!camera) return;
 
-                            if (!isUserInteracting) {
-                                angle += 0.0012;
-                                const distance = 320;
-                                camera.position.x = distance * Math.sin(angle);
-                                camera.position.y = 60 * Math.sin(angle * 0.4);
-                                camera.position.z = distance * Math.cos(angle);
-                            } else {
-                                angle = Math.atan2(camera.position.x, camera.position.z);
-                            }
-                        }
+                    // Только вращение камеры вокруг графа — без обхода каждого узла.
+                    // Обход узлов при 1000+ нодах = тысячи матричных операций/кадр → лаги.
+                    if (!isUserInteracting) {
+                        angle += 0.0008;
+                        // Расстояние подстраивается под реальный bbox графа
+                        const dist = _graphOrbitDist || 500;
+                        camera.position.x = dist * Math.sin(angle);
+                        camera.position.y = dist * 0.18 * Math.sin(angle * 0.35);
+                        camera.position.z = dist * Math.cos(angle);
+                        camera.lookAt(0, 0, 0);
+                    } else {
+                        angle = Math.atan2(camera.position.x, camera.position.z);
                     }
                 } catch (err) {
                     console.error("Ошибка в цикле анимации графа:", err);
@@ -2760,6 +2759,7 @@
             }
             tick();
         }
+        let _graphOrbitDist = 500;
 
         async function loadGraph() {
             const canvas = document.getElementById('3d-graph-canvas');
@@ -2813,20 +2813,20 @@
                         
                         return new THREE.Mesh(geometry, material);
                     })
-                    .linkWidth(0.8)
-                    .linkResolution(6)
-                    .linkColor(() => isLightTheme ? 'rgba(113, 113, 122, 0.3)' : 'rgba(63, 63, 70, 0.4)')
-                    .linkDirectionalParticles(2)
-                    .linkDirectionalParticleSpeed(0.006)
-                    .linkDirectionalParticleWidth(2.2)
+                    .linkWidth(0.6)
+                    .linkResolution(4)
+                    .linkColor(() => isLightTheme ? 'rgba(113, 113, 122, 0.25)' : 'rgba(99, 99, 116, 0.35)')
+                    // Частицы отключаем при большом графе — главный источник лагов
+                    .linkDirectionalParticles(myData.nodes.length > 200 ? 0 : 1)
+                    .linkDirectionalParticleSpeed(0.005)
+                    .linkDirectionalParticleWidth(1.8)
                     .linkDirectionalParticleColor(() => '#a78bfa')
                     .showNavInfo(false)
                     .onNodeClick(node => {
                         showNodeDetails(node.id);
                     })
-                    .onNodeHover(node => {
-                        hoveredNodeId = node ? node.id : null;
-                    });
+                    // Убраны hover-эффекты — они перерисовывали все узлы в tick()
+                    .onNodeHover(null);
 
                 // Lighting
                 const scene = graphInstance.scene();
@@ -2878,6 +2878,22 @@
                         isUserInteracting = false;
                     }, 5000);
                 };
+
+                // После стабилизации физики — подогнать камеру так, чтобы граф
+                // был виден полностью, и запомнить дистанцию для орбиты.
+                graphInstance.onEngineStop(() => {
+                    graphInstance.zoomToFit(800, 80);
+                    setTimeout(() => {
+                        const cam = graphInstance.camera();
+                        if (cam) {
+                            _graphOrbitDist = Math.sqrt(
+                                cam.position.x ** 2 +
+                                cam.position.y ** 2 +
+                                cam.position.z ** 2
+                            ) * 1.05; // чуть дальше чтобы граф не обрезался
+                        }
+                    }, 900);
+                });
 
                 startNodeAnimation();
 

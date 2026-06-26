@@ -224,7 +224,12 @@ class MemexTools:
     def git_commit(self, commit_message: str) -> bool:
         """Выполняет git add . && git commit в папке wiki_dir."""
         if not os.path.exists(os.path.join(self.wiki_dir, ".git")):
-            return False
+            try:
+                subprocess.run(["git", "init"], cwd=self.wiki_dir, stdout=subprocess.PIPE, stderr=subprocess.PIPE, check=True)
+                logger.info("Инициализирован новый Git репозиторий в wiki_dir.")
+            except Exception as e:
+                logger.error(f"Не удалось инициализировать Git репозиторий: {e}")
+                return False
         try:
             subprocess.run(["git", "add", "."], cwd=self.wiki_dir, stdout=subprocess.PIPE, stderr=subprocess.PIPE, check=True)
             res = subprocess.run(["git", "commit", "-m", commit_message], cwd=self.wiki_dir, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
@@ -287,10 +292,11 @@ class MemexTools:
         
         # Шаг 1: Двухэтапный синтаксический анализ (CoT + JSON экстракция)
         system_instruction = (
-            "Ты — аналитик долгосрочной памяти ИИ. Твоя задача — извлечь из текста ключевые понятия, "
-            "технологии (например, операционные системы, такие как Astra Linux), программное обеспечение, проекты и сущности. "
-            "Сопоставляй синонимы. Выделяй все значимые упоминания технологий как отдельные концепты. "
-            "Отвечай строго в формате JSON."
+            "Ты — аналитик долгосрочной памяти ИИ. Твоя задача — извлечь из предоставленного текста ключевые понятия, "
+            "технологии, программное обеспечение, проекты и другие значимые сущности. "
+            "Сопоставляй синонимы. Извлекай и выделяй в качестве концептов ТОЛЬКО те сущности, технологии или продукты, "
+            "которые действительно и явно упоминаются в тексте документа. Категорически запрещено придумывать или "
+            "добавлять сторонние технологии, которых нет в тексте. Отвечай строго в формате JSON."
         )
         
         prompt = f"""
@@ -299,15 +305,15 @@ class MemexTools:
 {content}
 ---
 
-Выдели ключевые концепты, сущности (включая операционные системы, такие как Astra Linux, программное обеспечение, организации) или проекты.
-Сначала проведи Chain-of-Thought рассуждения о том, какие сущности здесь упоминаются, как они связаны и какие синонимы могут быть объединены. Убедись, что упомянутые операционные системы или технологии (например, Astra Linux) выделены как концепты.
+Выдели ключевые концепты, сущности (программное обеспечение, технологии, библиотеки, стандарты, организации) или проекты, которые явно упоминаются в тексте.
+Сначала проведи Chain-of-Thought рассуждения о том, какие сущности действительно упоминаются в этом документе, как они связаны и какие синонимы могут быть объединены. Убедись, что ты НЕ добавляешь никаких внешних технологий или операционных систем, если они прямо не названы в тексте.
 Затем сформируй результат СТРОГО в следующем формате JSON (без Markdown форматирования, только сырой JSON):
 {{
   "summary": "Краткая выжимка (1-2 предложения) сути данного документа.",
   "tags": ["тег1", "тег2"],
   "concepts": [
     {{
-      "id": "нормализованный-id-через-дефис (например, astra-linux)",
+      "id": "нормализованный-id-через-дефис (например, python-library)",
       "title": "Человекочитаемое Название Концепта",
       "summary": "Одно предложение: что это за концепт.",
       "description": "Подробное описание концепта и его контекста из данного документа (с цитатами)."
@@ -438,6 +444,75 @@ class MemexTools:
             
         # 3. Обновляем оглавление wiki/index.md
         index_filepath = os.path.join(self.wiki_dir, "index.md")
+        if not os.path.exists(index_filepath):
+            os.makedirs(os.path.dirname(index_filepath), exist_ok=True)
+            
+            # Инициализируем user_profile.md
+            profile_filepath = os.path.join(self.wiki_dir, "user_profile.md")
+            if not os.path.exists(profile_filepath):
+                default_profile_meta = {
+                    "id": "user_profile",
+                    "type": "system",
+                    "tags": ["system", "profile"],
+                    "last_updated": today,
+                    "relations": "[[index]]"
+                }
+                default_profile_body = (
+                    "# Профиль Пользователя\n\n"
+                    "**Summary**: Стек технологий, предпочтения и настройки пользователя.\n\n"
+                    "---\n\n"
+                    "## Технологический стек\n"
+                    "- Python\n"
+                    "- JavaScript\n"
+                    "- Obsidian\n\n"
+                    "## Предпочтения\n"
+                    "- Локальные LLM модели\n"
+                )
+                with open(profile_filepath, "w", encoding="utf-8") as f:
+                    f.write(self.format_frontmatter(default_profile_meta) + default_profile_body)
+
+            # Инициализируем system_rules.md
+            rules_filepath = os.path.join(self.wiki_dir, "system_rules.md")
+            if not os.path.exists(rules_filepath):
+                default_rules_meta = {
+                    "id": "system_rules",
+                    "type": "system",
+                    "tags": ["system", "rules"],
+                    "last_updated": today,
+                    "relations": "[[index]]"
+                }
+                default_rules_body = (
+                    "# Системные Правила\n\n"
+                    "**Summary**: Системные правила и ограничения для ИИ-агентов, работающих с базой знаний.\n\n"
+                    "---\n\n"
+                    "## Правила взаимодействия\n"
+                    "1. Соблюдать структуру frontmatter во всех файлах.\n"
+                    "2. Не создавать дублирующих связей.\n"
+                    "3. Указывать источники в формате `(source: имя_файла)`.\n"
+                )
+                with open(rules_filepath, "w", encoding="utf-8") as f:
+                    f.write(self.format_frontmatter(default_rules_meta) + default_rules_body)
+
+            default_index_meta = {
+                "id": "index",
+                "type": "system",
+                "tags": ["system", "index", "map"],
+                "last_updated": today,
+                "relations": "[[user_profile]], [[system_rules]]"
+            }
+            default_index_body = (
+                "# Оглавление Базы Знаний\n\n"
+                "**Summary**: Главная страница базы знаний Memex-Wiki, содержащая список всех скомпилированных страниц и проектов.\n\n"
+                "**Sources**: Автоматически генерируемый системный файл.\n\n"
+                "---\n\n"
+                "## Системные профили\n"
+                "- [[user_profile]] — Профиль пользователя, стек и предпочтения.\n"
+                "- [[system_rules]] — Системные правила и ограничения для ИИ-агентов.\n\n"
+                "## Скомпилированные концепты и проекты\n"
+            )
+            with open(index_filepath, "w", encoding="utf-8") as f:
+                f.write(self.format_frontmatter(default_index_meta) + default_index_body)
+
         if os.path.exists(index_filepath):
             with open(index_filepath, "r", encoding="utf-8") as f:
                 index_content = f.read()
@@ -481,6 +556,24 @@ class MemexTools:
                 
         # 4. Обновляем лог wiki/log.md
         log_filepath = os.path.join(self.wiki_dir, "log.md")
+        if not os.path.exists(log_filepath):
+            os.makedirs(os.path.dirname(log_filepath), exist_ok=True)
+            default_log_meta = {
+                "id": "log",
+                "type": "system",
+                "tags": ["system", "log"],
+                "last_updated": today,
+                "relations": "[[index]]"
+            }
+            default_log_body = (
+                "# Журнал изменений Memex-Wiki\n\n"
+                "**Summary**: Системный журнал импорта и модификации файлов.\n\n"
+                "---\n\n"
+                "## История изменений\n"
+            )
+            with open(log_filepath, "w", encoding="utf-8") as f:
+                f.write(self.format_frontmatter(default_log_meta) + default_log_body)
+
         if os.path.exists(log_filepath):
             with open(log_filepath, "r", encoding="utf-8") as f:
                 log_content = f.read()
@@ -540,7 +633,8 @@ class MemexTools:
                             "id": meta.get("id", f_name[:-3]),
                             "type": meta.get("type", "unknown"),
                             "summary": summary,
-                            "filename": rel_path
+                            "filename": rel_path,
+                            "content_lower": content.lower()
                         })
                     except Exception as e:
                         logger.error(f"Не удалось распарсить файл {rel_path}: {e}")
@@ -548,10 +642,50 @@ class MemexTools:
         if not wiki_files:
             return "В базе знаний wiki/ нет доступных файлов концептов или выжимок."
             
-        # 2. LLM выбирает кандидатов на основе оглавления
+        # --- Пре-фильтрация и Ранжирование кандидатов ---
+        # Выделяем слова из поискового запроса
+        words = re.findall(r'[a-zA-Z0-9а-яА-ЯёЁ]+', query.lower())
+        stopwords = {"как", "для", "что", "это", "или", "имеет", "нужно", "какие", "права", "почему", "зачем", "кто", "где", "когда", "надо", "какой", "какая", "какое", "быть"}
+        
+        # Простейший стемминг: отбрасываем окончания для учета русской морфологии
+        search_terms = []
+        for w in words:
+            if w not in stopwords and len(w) >= 3:
+                stem = w[:-2] if len(w) > 5 else w[:-1] if len(w) > 3 else w
+                search_terms.append(stem)
+                
+        # Оцениваем релевантность каждого файла
+        ranked_files = []
+        if search_terms:
+            for f in wiki_files:
+                score = 0
+                f_id = f["id"].lower()
+                f_sum = f["summary"].lower()
+                f_content = f["content_lower"]
+                
+                for term in search_terms:
+                    if term in f_id:
+                        score += 50
+                    if term in f_sum:
+                        score += 20
+                    if term in f_content:
+                        score += 5
+                        
+                if score > 0:
+                    ranked_files.append((score, f))
+            
+            ranked_files.sort(key=lambda x: x[0], reverse=True)
+            candidate_files = [x[1] for x in ranked_files[:20]]
+        else:
+            candidate_files = wiki_files[:20]
+            
+        if not candidate_files:
+            candidate_files = wiki_files[:20]
+            
+        # 2. LLM выбирает кандидатов на основе оглавления отфильтрованных файлов
         files_summary = "\n".join([
             f"- ID: {f['id']} (тип: {f['type']}) — Сводка: {f['summary']}"
-            for f in wiki_files
+            for f in candidate_files
         ])
         
         system_select = "Ты — библиотекарь базы знаний. Твоя задача — отобрать наиболее релевантные файлы для ответа на запрос."

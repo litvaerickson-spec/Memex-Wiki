@@ -729,7 +729,7 @@ class MemexDashboardHandler(BaseHTTPRequestHandler):
                                 continue
                             try:
                                 with open(filepath, "r", encoding="utf-8", errors="ignore") as file_obj:
-                                    content = file_obj.read()
+                                    content = file_obj.read(2048)
                                 metadata, _ = tools.parse_frontmatter(content)
                                 if metadata.get("type") in ["source", "concept"]:
                                     to_delete.append(rel_path)
@@ -952,7 +952,7 @@ class MemexDashboardHandler(BaseHTTPRequestHandler):
                             else:
                                 try:
                                     with open(filepath, "r", encoding="utf-8", errors="ignore") as file_obj:
-                                        content = file_obj.read()
+                                        content = file_obj.read(2048)
                                     metadata, _ = tools.parse_frontmatter(content)
                                     if metadata.get("type") in ["source", "concept"]:
                                         should_del = True

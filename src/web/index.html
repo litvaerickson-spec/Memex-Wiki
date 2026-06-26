@@ -3410,22 +3410,47 @@
                     if (data.to_delete.length === 0 && data.to_skip.length === 0) {
                         listContainer.innerHTML = `<div style="color: var(--text-muted); text-align: center;">Нет файлов в папке wiki/</div>`;
                     } else {
-                        data.to_delete.forEach(f => {
-                            listContainer.innerHTML += `
+                        const htmlParts = [];
+                        const maxDisplay = 400;
+                        let count = 0;
+                        
+                        // Сначала удаляемые
+                        for (let i = 0; i < data.to_delete.length; i++) {
+                            if (count >= maxDisplay) break;
+                            const f = data.to_delete[i];
+                            htmlParts.push(`
                                 <div class="file-preview-item">
                                     <span class="preview-dot delete"></span>
                                     <span style="color: var(--error);">${f}</span>
                                 </div>
-                            `;
-                        });
-                        data.to_skip.forEach(f => {
-                            listContainer.innerHTML += `
+                            `);
+                            count++;
+                        }
+                        
+                        // Затем пропускаемые
+                        for (let i = 0; i < data.to_skip.length; i++) {
+                            if (count >= maxDisplay) break;
+                            const f = data.to_skip[i];
+                            htmlParts.push(`
                                 <div class="file-preview-item">
                                     <span class="preview-dot skip"></span>
                                     <span style="color: var(--success);">${f}</span>
                                 </div>
-                            `;
-                        });
+                            `);
+                            count++;
+                        }
+                        
+                        const totalFiles = data.to_delete.length + data.to_skip.length;
+                        if (totalFiles > maxDisplay) {
+                            const remaining = totalFiles - maxDisplay;
+                            htmlParts.push(`
+                                <div class="file-preview-item" style="color: var(--text-muted); font-style: italic; justify-content: center; padding: 6px;">
+                                    ... ${currentLang === 'ru' ? `и еще ${remaining} файлов` : `and ${remaining} more files`} ...
+                                </div>
+                            `);
+                        }
+                        
+                        listContainer.innerHTML = htmlParts.join('');
                     }
                     
                     // Слушаем ввод для подтверждения

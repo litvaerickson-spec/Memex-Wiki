@@ -2879,23 +2879,37 @@
                     }, 5000);
                 };
 
-                // После стабилизации физики — подогнать камеру так, чтобы граф
-                // был виден полностью, и запомнить дистанцию для орбиты.
+                // ── Начальная позиция камеры ──────────────────────────────────────
+                // Отодвигаем камеру далеко ДО старта физики, чтобы первый кадр
+                // уже показывал граф целиком, а не вплотную.
+                // Эвристика: ~15 единиц на узел, минимум 400, максимум 4000.
+                const initDist = Math.min(4000, Math.max(400, myData.nodes.length * 15));
+                _graphOrbitDist = initDist;
+                graphInstance.cameraPosition({ x: 0, y: 0, z: initDist });
+
+                // ── После остановки физики: мгновенный zoomToFit ──────────────────
+                // zoomToFit(0) = без анимации, сразу точный подгон.
+                // Потом запоминаем реальную дистанцию для орбиты.
                 graphInstance.onEngineStop(() => {
-                    graphInstance.zoomToFit(800, 80);
+                    if (!isUserInteracting) {
+                        graphInstance.zoomToFit(600, 60);   // плавный подгон 600мс
+                    }
+                    // Запоминаем расстояние через 700мс (после окончания анимации)
                     setTimeout(() => {
                         const cam = graphInstance.camera();
                         if (cam) {
-                            _graphOrbitDist = Math.sqrt(
+                            const d = Math.sqrt(
                                 cam.position.x ** 2 +
                                 cam.position.y ** 2 +
                                 cam.position.z ** 2
-                            ) * 1.05; // чуть дальше чтобы граф не обрезался
+                            );
+                            if (d > 50) _graphOrbitDist = d * 1.08; // +8% запаса
                         }
-                    }, 900);
+                    }, 750);
                 });
 
                 startNodeAnimation();
+
 
             } catch (e) {
                 canvas.innerHTML = '<div style="color: var(--error); padding: 40px; font-size: 13px;">Ошибка WebGL/3D: ' + e.message + '</div>';

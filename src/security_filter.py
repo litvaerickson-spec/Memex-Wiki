@@ -86,13 +86,13 @@ if __name__ == "__main__":
     test_text = """
     # Конфигурация проекта
     database_url = "postgresql://admin:...<your_password>...@localhost:5432/my_db"
-    openai_key = "...<your_openai_key>..."
-    gemini_key = "...<your_gemini_key>..."
+    openai_key = "sk-proj-...<your_openai_key>..."
+    gemini_key = "AIzaSy...<your_gemini_key>..."
     
     # Обычный текст
     Тут идет обычное описание проекта без паролей.
     Пароль администратора: "...<your_admin_password>..."
-    token = '...<your_github_token>...'
+    token = 'github_pat_...<your_github_token>...'
     """
     print("=== ИСХОДНЫЙ ТЕКСТ ===")
     print(test_text)

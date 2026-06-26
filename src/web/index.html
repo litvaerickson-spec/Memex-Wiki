@@ -3061,62 +3061,77 @@
             try {
                 const resp = await fetch('/api/ingest_quiet_status');
                 const s = await resp.json();
+
+                // Если процесс никогда не запускался — панель не трогаем вообще
+                if (!s.running && s.total === 0) return;
+
                 updateQuietPanel(s);
 
-                // Продолжаем поллинг если процесс активен
+                // Продолжаем поллинг только если процесс идёт
                 if (s.running) {
                     _quietPollTimer = setTimeout(pollQuietStatus, 10000);
                 }
             } catch(_) {}
         }
 
+        let _quietLastLogLen = 0;
+
         function updateQuietPanel(s) {
             const panel = document.getElementById('quiet-ingest-panel');
-            if (!s.running && s.total === 0) {
-                panel.style.display = 'none';
-                return;
-            }
-            panel.style.display = 'block';
+
+            // Никогда не скрываем panel через display:none отсюда если total>0
+            // (это вызывает reflow = моргание)
+            if (!s.running && s.total === 0) return;
+            if (panel.style.display !== 'block') panel.style.display = 'block';
 
             const pct = s.total > 0 ? ((s.done + s.errors) / s.total * 100).toFixed(1) : 0;
-            document.getElementById('quiet-bar').style.width   = pct + '%';
-            document.getElementById('quiet-done').textContent  = s.done;
-            document.getElementById('quiet-err').textContent   = s.errors;
-            document.getElementById('quiet-total').textContent = s.total;
+
+            // Пишем только изменившиеся значения чтобы не вызывать лишние repaint
+            const bar = document.getElementById('quiet-bar');
+            const newW = pct + '%';
+            if (bar.style.width !== newW) bar.style.width = newW;
+
+            const setTxt = (id, val) => {
+                const el = document.getElementById(id);
+                if (el && el.textContent !== String(val)) el.textContent = val;
+            };
+            setTxt('quiet-done',  s.done);
+            setTxt('quiet-err',   s.errors);
+            setTxt('quiet-total', s.total);
 
             // ETA
             const etaMin = Math.ceil(s.eta_sec / 60);
-            document.getElementById('quiet-eta').textContent =
-                s.eta_sec > 0 ? `~${etaMin} мин` : (s.running ? '...' : 'завершено');
+            setTxt('quiet-eta', s.eta_sec > 0 ? `~${etaMin} мин` : (s.running ? '...' : 'завершено'));
 
             // Текущий файл
-            const cur = document.getElementById('quiet-current');
             if (s.current) {
-                cur.textContent = `⏳ ${s.current}`;
+                setTxt('quiet-current', `⏳ ${s.current}`);
             } else if (!s.running) {
-                cur.textContent = s.stopped ? '🛑 Остановлено' : '✅ Завершено';
+                setTxt('quiet-current', s.stopped ? '🛑 Остановлено' : '✅ Завершено');
             }
 
             // Заголовок
-            const title = document.getElementById('quiet-title');
             if (!s.running) {
-                title.textContent = `🌙 Тихая индексация — ${s.stopped ? 'остановлена' : 'завершена'}`;
-                document.getElementById('quiet-stop-btn').textContent = '✕ Закрыть';
-                document.getElementById('quiet-stop-btn').onclick = () => {
-                    panel.style.display = 'none';
-                };
+                setTxt('quiet-title', `🌙 Тихая индексация — ${s.stopped ? 'остановлена' : 'завершена'}`);
+                const stopBtn = document.getElementById('quiet-stop-btn');
+                if (stopBtn.textContent.trim() !== '✕ Закрыть') {
+                    stopBtn.textContent = '✕ Закрыть';
+                    stopBtn.onclick = () => { panel.style.display = 'none'; };
+                }
             } else {
-                title.textContent = `🌙 Тихая индексация — ${pct}%`;
+                setTxt('quiet-title', `🌙 Тихая индексация — ${pct}%`);
             }
 
-            // Лог
+            // Лог — перезаписываем innerHTML только если список изменился
             const logEl = document.getElementById('quiet-log');
-            if (s.log && s.log.length > 0) {
+            if (s.log && s.log.length !== _quietLastLogLen) {
+                _quietLastLogLen = s.log.length;
                 logEl.innerHTML = s.log.slice(-20).map(l =>
                     `<div>${l.replace(/</g,'&lt;')}</div>`).join('');
                 logEl.scrollTop = logEl.scrollHeight;
             }
         }
+
     </script>
 </body>
 

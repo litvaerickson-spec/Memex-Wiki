@@ -50,95 +50,109 @@ def quiet_ingest_worker():
     - os.nice(19) — минимальный приоритет CPU.
     - Пауза DELAY_SEC между файлами (по умолчанию 30 сек).
     - Перед каждым файлом проверяет CPU idle:
-      если < 70% — ждёт дополнительно до 60 сек, переопрашивая каждые 10 сек.
+      если < 70% — ждёт дополнительно до 120 сек, переопрашивая каждые 10 сек.
     - Никогда не держит открытое HTTP-соединение.
     """
-    import time
-    global _quiet_state
+    import time, traceback
+    # Убеждаемся что tools доступен из папки src/
+    _src_dir = os.path.dirname(os.path.abspath(__file__))
+    if _src_dir not in sys.path:
+        sys.path.insert(0, _src_dir)
+    import tools as _tools
 
-    # Опускаем приоритет процесса до минимума
+    def _log(msg):
+        logger.info(f"[quiet] {msg}")
+        with _quiet_lock:
+            _quiet_state["log"].append(msg)
+            if len(_quiet_state["log"]) > 100:
+                _quiet_state["log"] = _quiet_state["log"][-100:]
+
     try:
-        os.nice(19)
-    except Exception:
-        pass
-
-    COOL_THRESHOLD = 70   # % CPU idle — «достаточно холодно»
-    MAX_THERMAL_WAIT = 120  # максимум секунд ожидания остывания перед файлом
-
-    with _quiet_lock:
-        queue = list(_quiet_state["queue"])
-        delay = _quiet_state["delay_sec"]
-
-    for idx, rel_path in enumerate(queue):
-        with _quiet_lock:
-            if _quiet_state["stopped"]:
-                break
-            _quiet_state["current"] = rel_path
-            remaining = len(queue) - idx
-            _quiet_state["eta_sec"] = remaining * delay
-
-        def _log(msg):
-            with _quiet_lock:
-                _quiet_state["log"].append(msg)
-                if len(_quiet_state["log"]) > 100:
-                    _quiet_state["log"] = _quiet_state["log"][-100:]
-
-        _log(f"[{idx+1}/{len(queue)}] Ожидаю остывания перед: {rel_path}")
-
-        # ── Thermal wait ──────────────────────────────────────────────────
-        waited = 0
-        while waited < MAX_THERMAL_WAIT:
-            with _quiet_lock:
-                if _quiet_state["stopped"]:
-                    break
-            cpu_idle = _quiet_get_cpu_idle()
-            if cpu_idle >= COOL_THRESHOLD:
-                break
-            _log(f"  🌡 CPU idle {cpu_idle:.0f}% < {COOL_THRESHOLD}% — жду 10 сек...")
-            time.sleep(10)
-            waited += 10
-
-        with _quiet_lock:
-            if _quiet_state["stopped"]:
-                break
-
-        # ── Импорт файла ──────────────────────────────────────────────────
-        _log(f"  ▶ Индексирую: {rel_path}")
+        # Опускаем приоритет процесса до минимума
         try:
-            import tools as _tools
-            _tools.load_config()
-            result = _tools.ingest_source(rel_path)
-            ok = not result.startswith("Ошибка")
-            with _quiet_lock:
-                if ok:
-                    _quiet_state["done"] += 1
-                    _log(f"  ✓ OK: {rel_path}")
-                else:
-                    _quiet_state["errors"] += 1
-                    _log(f"  ✗ Ошибка: {result[:120]}")
-        except Exception as e:
-            with _quiet_lock:
-                _quiet_state["errors"] += 1
-                _log(f"  ✗ Exception: {str(e)[:120]}")
+            os.nice(19)
+        except Exception:
+            pass
+
+        COOL_THRESHOLD  = 70   # % CPU idle — «достаточно холодно»
+        MAX_THERMAL_WAIT = 120  # максимум секунд ожидания остывания перед файлом
 
         with _quiet_lock:
-            if _quiet_state["stopped"]:
-                break
+            queue = list(_quiet_state["queue"])
+            delay = _quiet_state["delay_sec"]
 
-        # ── Пауза между файлами ───────────────────────────────────────────
-        # Разбиваем на 1-секундные шаги — чтобы Стоп реагировал быстро.
-        for _ in range(delay):
+        _log(f"🌙 Воркер запущен: {len(queue)} файлов, пауза {delay}с")
+
+        for idx, rel_path in enumerate(queue):
             with _quiet_lock:
                 if _quiet_state["stopped"]:
                     break
-            time.sleep(1)
+                _quiet_state["current"] = rel_path
+                _quiet_state["eta_sec"] = (len(queue) - idx) * delay
 
-    with _quiet_lock:
-        _quiet_state["running"] = False
-        _quiet_state["current"] = ""
-        if not _quiet_state["stopped"]:
-            _quiet_state["stopped"] = False  # завершение без остановки
+            _log(f"[{idx+1}/{len(queue)}] Проверяю температуру перед: {rel_path}")
+
+            # ── Thermal wait ──────────────────────────────────────────────
+            waited = 0
+            while waited < MAX_THERMAL_WAIT:
+                with _quiet_lock:
+                    if _quiet_state["stopped"]:
+                        break
+                cpu_idle = _quiet_get_cpu_idle()
+                if cpu_idle >= COOL_THRESHOLD:
+                    break
+                _log(f"  🌡 CPU idle {cpu_idle:.0f}% < {COOL_THRESHOLD}% — жду 10 сек...")
+                time.sleep(10)
+                waited += 10
+
+            with _quiet_lock:
+                if _quiet_state["stopped"]:
+                    break
+
+            # ── Импорт файла ──────────────────────────────────────────────
+            _log(f"  ▶ Индексирую: {rel_path}")
+            try:
+                _tools.load_config()
+                result = _tools.ingest_source(rel_path)
+                ok = not result.startswith("Ошибка")
+                with _quiet_lock:
+                    if ok:
+                        _quiet_state["done"] += 1
+                        _log(f"  ✓ Готово: {rel_path}")
+                    else:
+                        _quiet_state["errors"] += 1
+                        _log(f"  ✗ Ошибка LLM: {result[:120]}")
+            except Exception as e:
+                tb = traceback.format_exc(limit=3)
+                with _quiet_lock:
+                    _quiet_state["errors"] += 1
+                _log(f"  ✗ Exception: {str(e)[:120]}")
+                _log(f"    {tb.splitlines()[-1]}")
+
+            with _quiet_lock:
+                if _quiet_state["stopped"]:
+                    break
+
+            # ── Пауза между файлами ───────────────────────────────────────
+            # 1-секундные шаги — Стоп реагирует мгновенно.
+            for _ in range(delay):
+                with _quiet_lock:
+                    if _quiet_state["stopped"]:
+                        break
+                time.sleep(1)
+
+        with _quiet_lock:
+            _quiet_state["running"] = False
+            _quiet_state["current"] = ""
         _log("✅ Тихая индексация завершена.")
+
+    except Exception as e:
+        tb = traceback.format_exc()
+        logger.error(f"[quiet] Критическая ошибка воркера: {e}\n{tb}")
+        _log(f"💥 Критическая ошибка: {str(e)[:200]}")
+        with _quiet_lock:
+            _quiet_state["running"] = False
+
 
 def pull_model_thread(model_name, ollama_url_base):
     global pull_status

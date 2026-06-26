@@ -54,12 +54,8 @@ def quiet_ingest_worker():
     - Никогда не держит открытое HTTP-соединение.
     """
     import time, traceback
-    # Убеждаемся что tools доступен из папки src/
-    _src_dir = os.path.dirname(os.path.abspath(__file__))
-    if _src_dir not in sys.path:
-        sys.path.insert(0, _src_dir)
-    import tools as _tools
 
+    # _log нужен до импорта tools — определяем первым
     def _log(msg):
         logger.info(f"[quiet] {msg}")
         with _quiet_lock:
@@ -68,7 +64,8 @@ def quiet_ingest_worker():
                 _quiet_state["log"] = _quiet_state["log"][-100:]
 
     try:
-        # Опускаем приоритет процесса до минимума
+        # Используем глобальный экземпляр MemexTools (инициализирован при старте сервера)
+        # tools — это MemexTools объект, объявленный на уровне модуля
         try:
             os.nice(19)
         except Exception:
@@ -112,8 +109,9 @@ def quiet_ingest_worker():
             # ── Импорт файла ──────────────────────────────────────────────
             _log(f"  ▶ Индексирую: {rel_path}")
             try:
-                _tools.load_config()
-                result = _tools.ingest_source(rel_path)
+                tools.load_config()
+                result = tools.ingest_source(rel_path)
+
                 ok = not result.startswith("Ошибка")
                 with _quiet_lock:
                     if ok:

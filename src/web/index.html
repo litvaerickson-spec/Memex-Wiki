@@ -1587,6 +1587,10 @@
                 reset_modal_confirm_prompt: "Для подтверждения введите слово СБРОС в поле ниже:",
                 btn_cancel: "Отмена",
                 btn_confirm_reset: "Сбросить индекс",
+                reset_modal_after_action: "После успешного сброса:",
+                reset_after_active: "🔍 Запустить сканирование новых файлов (активный режим)",
+                reset_after_quiet: "🌙 Запустить тихую фоновую индексацию",
+                reset_after_none: "⏳ Ничего не делать (отложить на потом)",
 
                 
                 settings_title: "Настройки системы",
@@ -1752,6 +1756,10 @@
                 reset_modal_confirm_prompt: "To confirm, enter the word RESET in the field below:",
                 btn_cancel: "Cancel",
                 btn_confirm_reset: "Reset Index",
+                reset_modal_after_action: "After successful reset:",
+                reset_after_active: "🔍 Start scanning for new files (active mode)",
+                reset_after_quiet: "🌙 Start quiet background indexing",
+                reset_after_none: "⏳ Do nothing (defer for later)",
 
                 
                 settings_title: "System Settings",
@@ -2244,7 +2252,7 @@
         let scannedNewFiles = [];
         let scannedModifiedFiles = [];
 
-        function scanRawFiles() {
+        function scanRawFiles(afterScanMode = 'none') {
             const btn        = document.getElementById('scan-raw-btn');
             const panel      = document.getElementById('scan-progress-panel');
             const resultsWrapper = document.getElementById('scan-results-wrapper');
@@ -2387,6 +2395,10 @@
                 } else {
                     ingestAllBtn.style.display = 'block';
                     document.getElementById('ingest-quiet-btn').style.display = 'block';
+                    
+                    if (afterScanMode === 'quiet') {
+                        startQuietIngest();
+                    }
                 }
 
             });
@@ -3463,7 +3475,14 @@
                         }, 15000);
                     }
                     
-                    scanRawFiles();
+                    const afterScanVal = document.querySelector('input[name="reset-after-scan"]:checked')?.value || 'active';
+                    if (afterScanVal === 'active') {
+                        scanRawFiles('active');
+                    } else if (afterScanVal === 'quiet') {
+                        scanRawFiles('quiet');
+                    } else {
+                        // 'none' - do nothing
+                    }
                 } else {
                     showToast(currentLang === 'ru' ? 'Не удалось сбросить индекс: ' + data.error : 'Failed to reset index: ' + data.error, true);
                 }
@@ -3535,6 +3554,22 @@
                         <div id="reset-files-preview" class="file-list-preview" style="margin-top: 8px;"></div>
                     </details>
                     
+                    <p style="margin-top: 10px; font-weight: 600; color: var(--text);" data-i18n="reset_modal_after_action">После успешного сброса:</p>
+                    <div style="display: flex; flex-direction: column; gap: 8px; font-size: 13px; background: rgba(255, 255, 255, 0.05); padding: 10px; border-radius: 6px; border: 1px solid var(--border); margin-bottom: 12px;">
+                        <label style="display: flex; align-items: center; gap: 8px; cursor: pointer;">
+                            <input type="radio" name="reset-after-scan" value="active" checked>
+                            <span data-i18n="reset_after_active">🔍 Запустить сканирование новых файлов</span>
+                        </label>
+                        <label style="display: flex; align-items: center; gap: 8px; cursor: pointer;">
+                            <input type="radio" name="reset-after-scan" value="quiet">
+                            <span data-i18n="reset_after_quiet">🌙 Запустить тихую фоновую индексацию</span>
+                        </label>
+                        <label style="display: flex; align-items: center; gap: 8px; cursor: pointer;">
+                            <input type="radio" name="reset-after-scan" value="none">
+                            <span data-i18n="reset_after_none">⏳ Ничего не делать (отложить на потом)</span>
+                        </label>
+                    </div>
+
                     <p style="margin-top: 10px; font-weight: 600; color: var(--text);" data-i18n="reset_modal_confirm_prompt">Для подтверждения введите слово СБРОС в поле ниже:</p>
                     <input type="text" id="reset-confirm-input" class="modal-input" placeholder="Введите код...">
                 </div>

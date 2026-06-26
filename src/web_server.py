@@ -413,40 +413,112 @@ class MemexDashboardHandler(BaseHTTPRequestHandler):
         if path == "/api/thermal":
             import multiprocessing, subprocess as sp, re as _re
             result = {"level": 0, "label": "cool", "cpu_idle": 100.0,
-                      "load_per_core": 0.0, "pause_ms": 0}
+                      "load_per_core": 0.0, "battery_temp_c": None,
+                      "sources": [], "pause_ms": 0}
             try:
                 cpus = multiprocessing.cpu_count()
-                load1, _, _ = os.getloadavg()
-                load_per_core = load1 / max(cpus, 1)
+                load1, load5, _ = os.getloadavg()
+                load_per_core_1m = load1 / max(cpus, 1)
+                load_per_core_5m = load5 / max(cpus, 1)
 
-                # Получаем CPU idle% через top (без sudo, ~0.3 сек)
-                top_out = sp.run(
-                    ["top", "-l", "1", "-n", "0"],
-                    capture_output=True, text=True, timeout=4
-                ).stdout
-                idle_match = _re.search(r"(\d+\.\d+)%\s+idle", top_out)
-                cpu_idle = float(idle_match.group(1)) if idle_match else 100.0
+                # ── Источник 1: CPU idle% — два замера, берём ВТОРОЙ (реальный дельта) ──
+                # top -l 1 возвращает накопленный % с загрузки ОС — неточно.
+                # top -l 2 -s 1: первый кадр = с загрузки, второй = за последнюю секунду.
+                cpu_idle = 100.0
+                try:
+                    top_out = sp.run(
+                        ["top", "-l", "2", "-n", "0", "-s", "1"],
+                        capture_output=True, text=True, timeout=6
+                    ).stdout
+                    all_matches = _re.findall(r"(\d+\.\d+)%\s+idle", top_out)
+                    if len(all_matches) >= 2:
+                        cpu_idle = float(all_matches[-1])   # последний = 2-й кадр
+                    elif all_matches:
+                        cpu_idle = float(all_matches[0])
+                except Exception as e_top:
+                    logger.warning(f"top -l 2 ошибка: {e_top}")
 
-                # Уровни теплового давления:
-                # 0 COOL   — idle > 60%  или load/core < 0.5  → пауза 0 сек
-                # 1 WARM   — idle 40-60% или load/core 0.5-0.8 → пауза 2 сек
-                # 2 HOT    — idle 20-40% или load/core 0.8-1.2 → пауза 6 сек
-                # 3 CRITICAL — idle < 20% или load/core > 1.2  → пауза 15 сек
-                if cpu_idle < 20 or load_per_core > 1.2:
-                    level, label, pause_ms = 3, "critical", 15000
-                elif cpu_idle < 40 or load_per_core > 0.8:
-                    level, label, pause_ms = 2, "hot", 6000
-                elif cpu_idle < 60 or load_per_core > 0.5:
-                    level, label, pause_ms = 1, "warm", 2000
+                # ── Источник 2: температура батареи через ioreg (без sudo) ──
+                # AppleSmartBattery → Temperature (в единицах 0.01°C)
+                battery_temp_c = None
+                virtual_temp_c = None
+                try:
+                    ioreg_out = sp.run(
+                        ["ioreg", "-r", "-d", "1", "-c", "AppleSmartBattery",
+                         "-k", "Temperature", "-k", "VirtualTemperature"],
+                        capture_output=True, text=True, timeout=3
+                    ).stdout
+                    m_temp = _re.search(r'"Temperature"\s*=\s*(\d+)', ioreg_out)
+                    m_virt = _re.search(r'"VirtualTemperature"\s*=\s*(\d+)', ioreg_out)
+                    if m_temp:
+                        battery_temp_c = round(int(m_temp.group(1)) / 100.0, 1)
+                    if m_virt:
+                        virtual_temp_c = round(int(m_virt.group(1)) / 100.0, 1)
+                except Exception as e_ior:
+                    logger.warning(f"ioreg температура ошибка: {e_ior}")
+
+                # ── Уровень по каждому источнику, берём максимум ──
+                sources = []
+
+                # CPU idle (тиски: >70% cool, 55-70 warm, 35-55 hot, <35 critical)
+                if cpu_idle < 35:
+                    lvl_cpu, src_cpu = 3, f"CPU idle {cpu_idle:.0f}% (<35%)"
+                elif cpu_idle < 55:
+                    lvl_cpu, src_cpu = 2, f"CPU idle {cpu_idle:.0f}% (<55%)"
+                elif cpu_idle < 70:
+                    lvl_cpu, src_cpu = 1, f"CPU idle {cpu_idle:.0f}% (<70%)"
                 else:
-                    level, label, pause_ms = 0, "cool", 0
+                    lvl_cpu, src_cpu = 0, f"CPU idle {cpu_idle:.0f}%"
+                sources.append(src_cpu)
+
+                # Sustained load (5-min avg): >1.0/core hot, >0.7/core warm
+                if load_per_core_5m > 1.0:
+                    lvl_load, src_load = 3, f"load5m {load5:.1f} (>{cpus} cores)"
+                elif load_per_core_5m > 0.7:
+                    lvl_load, src_load = 2, f"load5m {load5:.1f} (>0.7/core)"
+                elif load_per_core_5m > 0.45:
+                    lvl_load, src_load = 1, f"load5m {load5:.1f} (>0.45/core)"
+                else:
+                    lvl_load, src_load = 0, f"load5m {load5:.1f}"
+                sources.append(src_load)
+
+                # Температура батареи (рядом с CPU, хороший косвенный показатель)
+                # MacBook нормальная: <35°C. Тёплая: 35-42°C. Горячая: 42-50°C. Критично: >50°C
+                lvl_batt = 0
+                if virtual_temp_c is not None:
+                    temp_ref = virtual_temp_c  # VirtualTemperature точнее при нагрузке
+                elif battery_temp_c is not None:
+                    temp_ref = battery_temp_c
+                else:
+                    temp_ref = None
+
+                if temp_ref is not None:
+                    if temp_ref > 50:
+                        lvl_batt, src_batt = 3, f"batt {temp_ref:.0f}°C (>50°C 🔥)"
+                    elif temp_ref > 42:
+                        lvl_batt, src_batt = 2, f"batt {temp_ref:.0f}°C (>42°C)"
+                    elif temp_ref > 35:
+                        lvl_batt, src_batt = 1, f"batt {temp_ref:.0f}°C (>35°C)"
+                    else:
+                        lvl_batt, src_batt = 0, f"batt {temp_ref:.0f}°C"
+                    sources.append(src_batt)
+
+                # Итоговый уровень = наихудший из всех источников
+                level = max(lvl_cpu, lvl_load, lvl_batt)
+
+                labels = {0: "cool", 1: "warm", 2: "hot", 3: "critical"}
+                label  = labels[level]
+                # Пауза теперь только сигнальная (фронтенд сам ждёт остывания)
+                pause_ms_map = {0: 0, 1: 3000, 2: 8000, 3: 20000}
 
                 result = {
-                    "level": level,
-                    "label": label,
-                    "cpu_idle": round(cpu_idle, 1),
-                    "load_per_core": round(load_per_core, 2),
-                    "pause_ms": pause_ms
+                    "level":          level,
+                    "label":          label,
+                    "cpu_idle":       round(cpu_idle, 1),
+                    "load_per_core":  round(load_per_core_1m, 2),
+                    "battery_temp_c": temp_ref,
+                    "sources":        sources,
+                    "pause_ms":       pause_ms_map[level]
                 }
             except Exception as e:
                 logger.warning(f"Не удалось получить тепловой статус: {e}")

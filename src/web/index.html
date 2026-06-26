@@ -2327,11 +2327,15 @@
             const updateThermal = (thermalInfo) => {
                 const el = document.getElementById('ingest-thermal-badge');
                 if (!el || !thermalInfo) return;
-                const tlabels   = { cool:'🟢 Холодно', warm:'🟡 Тепло', hot:'🟠 Горячо', critical:'🔴 Критично' };
-                const tlabelsEn = { cool:'🟢 Cool',    warm:'🟡 Warm',  hot:'🟠 Hot',    critical:'🔴 Critical'  };
-                const tmap = currentLang === 'ru' ? tlabels : tlabelsEn;
-                el.textContent = `${tmap[thermalInfo.label]||'🟢'}  CPU idle: ${thermalInfo.cpu_idle.toFixed(0)}%  ·  ${currentLang==='ru'?'Пауза':'Delay'}: ${(thermalInfo.pause_ms/1000).toFixed(0)}s`;
+                const tlabels   = { cool:'🟢', warm:'🟡', hot:'🟠', critical:'🔴' };
+                const icon = tlabels[thermalInfo.label] || '🟢';
+                const batt = thermalInfo.battery_temp_c != null
+                    ? ` · 🌡${thermalInfo.battery_temp_c.toFixed(0)}°C`
+                    : '';
+                el.textContent = `${icon} CPU idle: ${thermalInfo.cpu_idle.toFixed(0)}%${batt}`;
+                el.title = thermalInfo.sources ? thermalInfo.sources.join(' | ') : '';
             };
+
 
             const sleep = ms => new Promise(r => setTimeout(r, ms));
             const waitIfPaused = async () => {
@@ -2360,14 +2364,17 @@
                 // Тепловая пауза: ждём пока система реально остынет, а не просто
                 // спим фиксированное время. Переопрашиваем /api/thermal каждые 5 сек.
                 if (thermalInfo && thermalInfo.level > 0 && !isStopped) {
-                    const coolThreshold = 55; // % CPU idle — считаем «холодно» при этом значении
+                    const coolThreshold = 70; // % CPU idle — считаем «холодно» при этом значении
                     let elapsed = 0;
                     while (!isStopped) {
-                        // Обновляем бейдж каждую секунду
+                        const battStr = thermalInfo.battery_temp_c != null
+                            ? ` · 🌡 ${thermalInfo.battery_temp_c.toFixed(0)}°C`
+                            : '';
+                        const icon = thermalInfo.level >= 3 ? '🔴' : thermalInfo.level >= 2 ? '🟠' : '🟡';
                         updateStatus(
-                            `${thermalInfo.level >= 3 ? '🔴' : thermalInfo.level >= 2 ? '🟠' : '🟡'} ` +
-                            `${currentLang==='ru' ? 'Жду остывания' : 'Waiting to cool'} — ` +
-                            `CPU idle: ${thermalInfo.cpu_idle.toFixed(0)}% (${currentLang==='ru' ? 'нужно' : 'need'} >${coolThreshold}%) · ${elapsed}s`
+                            `${icon} ${currentLang==='ru' ? 'Жду остывания' : 'Waiting to cool'} — ` +
+                            `CPU idle: ${thermalInfo.cpu_idle.toFixed(0)}%${battStr} ` +
+                            `(${currentLang==='ru' ? 'нужно' : 'need'} >${coolThreshold}%) · ${elapsed}s`
                         );
                         await sleep(1000);
                         elapsed++;
@@ -2390,6 +2397,7 @@
                     if (isStopped) break;
                     updateStatus(file.rel_path);
                 }
+
 
 
                 // Импорт — с AbortController чтобы Stop реально прерывал запрос
